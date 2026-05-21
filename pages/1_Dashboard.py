@@ -62,27 +62,23 @@ elif "Sector" in df.columns:
 else:
     df["__sector"] = ""
 
-# Map each row's sector to its owning analyst for the quota view.
+# Map each row's sector to its owning analyst.
 df["__analyst"] = df["__sector"].map(OWNERS).fillna("Unassigned")
 
 total = len(df)
 today = dt.date.today().isoformat()
 today_count = int((df.get("Date of Entry", pd.Series(dtype=str)) == today).sum())
-team_quota = QUOTA * len(ANALYSTS)
 
-m1, m2, m3 = st.columns(3)
+m1, m2 = st.columns(2)
 m1.metric("Total leads", total)
 m2.metric("Added today", today_count)
-m3.metric("Team quota", f"{total} / {team_quota}")
 
 st.divider()
 
-st.subheader("Per-analyst progress vs 600")
+st.subheader("Leads per analyst")
 analyst_counts = df.groupby("__analyst").size().reindex(ANALYSTS, fill_value=0).rename("count")
 prog = pd.DataFrame({"analyst": analyst_counts.index, "count": analyst_counts.values})
-prog["quota"] = QUOTA
 prog["sectors"] = prog["analyst"].map(lambda a: ", ".join(ANALYST_SECTORS.get(a, [])))
-prog["pct"] = (prog["count"] / prog["quota"] * 100).round(1)
 st.dataframe(prog, width="stretch", hide_index=True)
 st.bar_chart(prog.set_index("analyst")["count"])
 

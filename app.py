@@ -24,7 +24,7 @@ st.markdown(
                   margin-bottom:6px;">Summer Cycle · 2026</div>
       <h1 style="margin:0;">Client Outreach Pipeline</h1>
       <p style="color:{BRAND_GREEN}; font-weight:500; font-size:1rem; margin-top:4px;">
-        Prospect · enrich · draft · track — across 5 sectors and 3,000 leads.
+        Prospect, enrich, draft, and track outreach across 15 sectors.
       </p>
     </div>
     """,
@@ -38,7 +38,7 @@ st.markdown(
     f"""
 | Page | What it does |
 |---|---|
-| **Dashboard** | Quota progress, status breakdown, follow-ups due |
+| **Dashboard** | Leads per analyst, status breakdown, recent activity |
 | **Keywords** | Generate Apollo / LinkedIn / Google query strings for your sector × signal |
 | **Discover** | Find companies via Brave search → Gemini extraction |
 | **Enrich** | Find POCs and emails (Hunter → Snov chain, Brave domain lookup) |
@@ -52,10 +52,9 @@ st.divider()
 
 st.markdown("### Status")
 
-cols = st.columns(3)
+cols = st.columns(2)
 cols[0].metric("Gemini configured", "Yes" if gemini_key() else "No")
 cols[1].metric("Sheet configured", "Yes" if sheet_id() else "No")
-cols[2].metric("Quota / sector", "600")
 
 if not sheet_id():
     st.warning(
