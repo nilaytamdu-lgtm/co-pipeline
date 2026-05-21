@@ -57,7 +57,7 @@ if not raw_results:
     st.stop()
 
 with st.expander(f"Raw search results ({len(raw_results)})", expanded=False):
-    st.dataframe(pd.DataFrame(raw_results)[["title", "url", "description", "_dork"]], hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(raw_results)[["title", "url", "description", "_dork"]], hide_index=True, width="stretch")
 
 st.divider()
 st.subheader("Extract structured leads with Gemini")
@@ -80,7 +80,7 @@ leads_df = pd.DataFrame(leads)
 leads_df.insert(0, "add", False)
 edited = st.data_editor(
     leads_df,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={"add": st.column_config.CheckboxColumn(required=True)},
     key="leads_editor",

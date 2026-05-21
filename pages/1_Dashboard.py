@@ -77,7 +77,7 @@ prog = pd.DataFrame({"sector": sector_counts.index, "count": sector_counts.value
 prog["quota"] = QUOTA
 prog["owner"] = prog["sector"].map(OWNERS)
 prog["pct"] = (prog["count"] / prog["quota"] * 100).round(1)
-st.dataframe(prog, use_container_width=True, hide_index=True)
+st.dataframe(prog, width="stretch", hide_index=True)
 st.bar_chart(prog.set_index("sector")["count"])
 
 st.subheader("Status breakdown")

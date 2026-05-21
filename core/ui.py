@@ -156,7 +156,7 @@ _TEXT_LOGO = f"""
 
 def _render_logo_in_sidebar() -> None:
     if LOGO_PATH.exists():
-        st.sidebar.image(str(LOGO_PATH), use_container_width=True)
+        st.sidebar.image(str(LOGO_PATH), width="stretch")
     else:
         st.sidebar.markdown(_TEXT_LOGO, unsafe_allow_html=True)
     st.sidebar.markdown('<div class="brand-tagline">Client Outreach Pipeline</div>', unsafe_allow_html=True)

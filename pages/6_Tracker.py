@@ -46,7 +46,7 @@ if query:
     mask = df.apply(lambda r: r.astype(str).str.contains(query, case=False, na=False)).any(axis=1)
     df = df[mask]
 
-st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+st.dataframe(df, width="stretch", hide_index=True, height=500)
 
 st.divider()
 
@@ -66,7 +66,7 @@ if dedupe_col:
         st.success("No duplicates found.")
     else:
         st.warning(f"{len(dups)} duplicate rows.")
-        st.dataframe(dups, use_container_width=True, hide_index=True)
+        st.dataframe(dups, width="stretch", hide_index=True)
 else:
     st.caption("No identifiable key column for dedupe on this tab.")
 
