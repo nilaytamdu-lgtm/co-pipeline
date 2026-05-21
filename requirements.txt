@@ -1,0 +1,9 @@
+streamlit>=1.32
+gspread>=6.0
+google-auth>=2.28
+google-generativeai>=0.5
+pandas>=2.2
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.1
+python-dateutil>=2.8
