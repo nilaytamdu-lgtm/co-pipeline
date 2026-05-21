@@ -4,6 +4,8 @@ import pandas as pd
 import streamlit as st
 
 from core.config import (
+    ANALYSTS,
+    ANALYST_SECTORS,
     OWNERS,
     QUOTA,
     SECTORS,
@@ -60,25 +62,36 @@ elif "Sector" in df.columns:
 else:
     df["__sector"] = ""
 
-# Top-line metrics
+# Map each row's sector to its owning analyst for the quota view.
+df["__analyst"] = df["__sector"].map(OWNERS).fillna("Unassigned")
+
 total = len(df)
 today = dt.date.today().isoformat()
 today_count = int((df.get("Date of Entry", pd.Series(dtype=str)) == today).sum())
+team_quota = QUOTA * len(ANALYSTS)
+
 m1, m2, m3 = st.columns(3)
 m1.metric("Total leads", total)
 m2.metric("Added today", today_count)
-m3.metric("Team quota", f"{total} / {QUOTA * len(SECTORS)}")
+m3.metric("Team quota", f"{total} / {team_quota}")
 
 st.divider()
 
-st.subheader("Per-sector progress vs 600")
-sector_counts = df.groupby("__sector").size().reindex(SECTORS, fill_value=0).rename("count")
-prog = pd.DataFrame({"sector": sector_counts.index, "count": sector_counts.values})
+st.subheader("Per-analyst progress vs 600")
+analyst_counts = df.groupby("__analyst").size().reindex(ANALYSTS, fill_value=0).rename("count")
+prog = pd.DataFrame({"analyst": analyst_counts.index, "count": analyst_counts.values})
 prog["quota"] = QUOTA
-prog["owner"] = prog["sector"].map(OWNERS)
+prog["sectors"] = prog["analyst"].map(lambda a: ", ".join(ANALYST_SECTORS.get(a, [])))
 prog["pct"] = (prog["count"] / prog["quota"] * 100).round(1)
 st.dataframe(prog, width="stretch", hide_index=True)
-st.bar_chart(prog.set_index("sector")["count"])
+st.bar_chart(prog.set_index("analyst")["count"])
+
+st.subheader("Per-sector breakdown")
+sector_counts = df.groupby("__sector").size().reindex(SECTORS, fill_value=0).rename("count")
+sect_df = pd.DataFrame({"sector": sector_counts.index, "count": sector_counts.values})
+sect_df["analyst"] = sect_df["sector"].map(OWNERS)
+sect_df = sect_df[["analyst", "sector", "count"]].sort_values(["analyst", "sector"])
+st.dataframe(sect_df, width="stretch", hide_index=True)
 
 st.subheader("Status breakdown")
 status_col = None

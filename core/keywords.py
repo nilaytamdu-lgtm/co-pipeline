@@ -15,35 +15,100 @@ from core.config import POC_HIERARCHY
 # Industries here use Apollo's display names. Tweak as you find what
 # actually returns volume in your account.
 SECTOR_PROFILE = {
-    "SaaS + AI + Automation": {
+    # ---- Swaroop ----
+    "SaaS": {
         "industries": ["Computer Software", "Information Technology and Services", "Internet"],
-        "keywords": ["SaaS", "B2B software", "AI platform", "machine learning", "automation", "developer tools"],
-        "linkedin_boolean": '("SaaS" OR "B2B software" OR "AI platform" OR "automation") AND ("founder" OR "CEO" OR "Head of Growth")',
+        "keywords": ["SaaS", "B2B software", "subscription software", "cloud software", "enterprise software"],
+        "linkedin_boolean": '("SaaS" OR "B2B software" OR "subscription software" OR "enterprise software") AND ("founder" OR "CEO" OR "Head of Growth")',
         "google_seed": "SaaS startup India",
     },
-    "FMCG / Food & Beverage / Consumer Brands / Consumer E-commerce": {
-        "industries": ["Consumer Goods", "Food & Beverages", "Retail", "Food Production", "Consumer Services"],
-        "keywords": ["D2C", "direct-to-consumer", "FMCG", "consumer brand", "food brand", "F&B", "QSR", "packaged food", "personal care", "beauty"],
-        "linkedin_boolean": '("D2C" OR "direct-to-consumer" OR "FMCG" OR "consumer brand" OR "food brand" OR "QSR") AND ("founder" OR "co-founder" OR "Head of Growth")',
-        "google_seed": "D2C brand India OR FMCG startup",
+    "AI": {
+        "industries": ["Computer Software", "Internet", "Information Technology and Services"],
+        "keywords": ["AI", "machine learning", "LLM", "GenAI", "deep learning", "AI platform"],
+        "linkedin_boolean": '("AI" OR "machine learning" OR "GenAI" OR "LLM" OR "AI platform") AND ("founder" OR "CEO" OR "CTO")',
+        "google_seed": "AI startup India OR machine learning",
     },
-    "Logistics & Supply Chain + Climate-tech / Sustainability": {
-        "industries": ["Logistics and Supply Chain", "Transportation/Trucking/Railroad", "Renewables & Environment", "Environmental Services"],
-        "keywords": ["logistics", "supply chain", "last mile", "fleet", "warehouse", "climate tech", "cleantech", "sustainability", "carbon", "EV"],
-        "linkedin_boolean": '("logistics" OR "supply chain" OR "climate tech" OR "cleantech" OR "EV") AND ("founder" OR "CEO" OR "Head of Operations")',
-        "google_seed": "logistics startup India OR climate-tech",
+    "Automation": {
+        "industries": ["Computer Software", "Information Technology and Services"],
+        "keywords": ["automation", "RPA", "workflow automation", "process automation", "no-code", "low-code"],
+        "linkedin_boolean": '("automation" OR "RPA" OR "workflow automation" OR "no-code") AND ("founder" OR "CEO")',
+        "google_seed": "automation startup India OR RPA",
     },
-    "Fintech + Edtech": {
-        "industries": ["Financial Services", "Banking", "Education Management", "E-Learning", "Investment Management"],
-        "keywords": ["fintech", "neobank", "payments", "lending", "wealth", "insurtech", "edtech", "online learning", "K-12", "upskilling"],
-        "linkedin_boolean": '("fintech" OR "neobank" OR "payments" OR "edtech" OR "online learning") AND ("founder" OR "CEO" OR "Head of Product")',
-        "google_seed": "fintech startup India OR edtech",
+    # ---- Nilay ----
+    "FMCG": {
+        "industries": ["Consumer Goods", "Food Production", "Cosmetics"],
+        "keywords": ["FMCG", "packaged goods", "personal care", "household", "consumer packaged"],
+        "linkedin_boolean": '("FMCG" OR "packaged goods" OR "personal care" OR "household products") AND ("founder" OR "CEO" OR "Head of Growth")',
+        "google_seed": "FMCG startup India OR packaged goods",
     },
-    "Healthtech + NGOs / Social Impact": {
-        "industries": ["Hospital & Health Care", "Medical Practice", "Health, Wellness and Fitness", "Non-profit Organization Management", "Civic & Social Organization"],
-        "keywords": ["healthtech", "digital health", "telemedicine", "diagnostics", "wellness", "NGO", "social impact", "non-profit", "social enterprise"],
-        "linkedin_boolean": '("healthtech" OR "digital health" OR "telemedicine" OR "social impact" OR "non-profit") AND ("founder" OR "CEO" OR "Executive Director")',
-        "google_seed": "healthtech startup India OR social-impact NGO",
+    "Food & Beverage": {
+        "industries": ["Food & Beverages", "Restaurants", "Food Production"],
+        "keywords": ["F&B", "food brand", "beverage", "QSR", "restaurant", "packaged food", "cloud kitchen"],
+        "linkedin_boolean": '("F&B" OR "food brand" OR "beverage" OR "QSR" OR "cloud kitchen") AND ("founder" OR "CEO")',
+        "google_seed": "food beverage startup India OR D2C food",
+    },
+    "Consumer Brands": {
+        "industries": ["Consumer Goods", "Apparel & Fashion", "Cosmetics", "Sporting Goods"],
+        "keywords": ["D2C", "consumer brand", "lifestyle brand", "personal care brand", "wellness brand", "beauty brand"],
+        "linkedin_boolean": '("D2C" OR "consumer brand" OR "lifestyle brand" OR "beauty brand") AND ("founder" OR "CEO" OR "Head of Growth")',
+        "google_seed": "D2C brand India OR consumer brand",
+    },
+    "Consumer E-commerce": {
+        "industries": ["Retail", "Internet", "Consumer Goods", "Apparel & Fashion"],
+        "keywords": ["e-commerce", "online retail", "Shopify", "D2C", "marketplace", "online brand"],
+        "linkedin_boolean": '("e-commerce" OR "D2C" OR "online retail" OR "Shopify" OR "marketplace") AND ("founder" OR "CEO")',
+        "google_seed": "e-commerce startup India OR D2C",
+    },
+    # ---- Praneel ----
+    "Logistics & Supply Chain": {
+        "industries": ["Logistics and Supply Chain", "Transportation/Trucking/Railroad", "Warehousing", "Package/Freight Delivery"],
+        "keywords": ["logistics", "supply chain", "last mile", "fleet", "warehouse", "freight", "3PL"],
+        "linkedin_boolean": '("logistics" OR "supply chain" OR "last mile" OR "fleet management" OR "3PL") AND ("founder" OR "CEO" OR "Head of Operations")',
+        "google_seed": "logistics startup India OR supply chain",
+    },
+    "Climate-tech": {
+        "industries": ["Renewables & Environment", "Environmental Services", "Oil & Energy"],
+        "keywords": ["climate tech", "cleantech", "carbon", "EV", "renewable energy", "solar", "energy storage"],
+        "linkedin_boolean": '("climate tech" OR "cleantech" OR "EV" OR "renewable energy" OR "carbon capture") AND ("founder" OR "CEO")',
+        "google_seed": "climate tech startup India OR cleantech",
+    },
+    "Sustainability": {
+        "industries": ["Environmental Services", "Renewables & Environment", "Consumer Goods"],
+        "keywords": ["sustainability", "ESG", "circular economy", "sustainable brand", "eco-friendly", "zero waste"],
+        "linkedin_boolean": '("sustainability" OR "ESG" OR "circular economy" OR "sustainable brand") AND ("founder" OR "CEO" OR "Sustainability Lead")',
+        "google_seed": "sustainability startup India OR circular economy",
+    },
+    # ---- Pranav ----
+    "Fintech": {
+        "industries": ["Financial Services", "Banking", "Investment Management", "Insurance"],
+        "keywords": ["fintech", "neobank", "payments", "lending", "wealth", "insurtech"],
+        "linkedin_boolean": '("fintech" OR "neobank" OR "payments" OR "lending" OR "insurtech") AND ("founder" OR "CEO" OR "Head of Product")',
+        "google_seed": "fintech startup India OR neobank",
+    },
+    "Edtech": {
+        "industries": ["Education Management", "E-Learning", "Higher Education"],
+        "keywords": ["edtech", "online learning", "K-12", "upskilling", "test prep", "skill development"],
+        "linkedin_boolean": '("edtech" OR "online learning" OR "K-12" OR "upskilling") AND ("founder" OR "CEO" OR "Head of Product")',
+        "google_seed": "edtech startup India OR online learning",
+    },
+    # ---- Purav ----
+    "Healthtech": {
+        "industries": ["Hospital & Health Care", "Medical Practice", "Health, Wellness and Fitness", "Medical Devices"],
+        "keywords": ["healthtech", "digital health", "telemedicine", "diagnostics", "wellness", "mental health"],
+        "linkedin_boolean": '("healthtech" OR "digital health" OR "telemedicine" OR "diagnostics" OR "mental health") AND ("founder" OR "CEO")',
+        "google_seed": "healthtech startup India OR digital health",
+    },
+    "NGOs": {
+        "industries": ["Non-profit Organization Management", "Civic & Social Organization"],
+        "keywords": ["NGO", "non-profit", "charity", "foundation", "trust"],
+        "linkedin_boolean": '("NGO" OR "non-profit" OR "charity" OR "foundation") AND ("founder" OR "Executive Director" OR "Director")',
+        "google_seed": "NGO India OR non-profit organization",
+    },
+    "Social Impact Organizations": {
+        "industries": ["Civic & Social Organization", "Non-profit Organization Management", "Government Relations"],
+        "keywords": ["social impact", "social enterprise", "impact organization", "development sector"],
+        "linkedin_boolean": '("social impact" OR "social enterprise" OR "impact organization" OR "development sector") AND ("founder" OR "Executive Director")',
+        "google_seed": "social impact organization India OR social enterprise",
     },
 }
 

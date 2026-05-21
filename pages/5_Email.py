@@ -34,7 +34,7 @@ poc_name = c2.text_input("POC name", placeholder="e.g. Meghana Narayan")
 
 c3, c4 = st.columns(2)
 poc_role = c3.selectbox("POC role", POC_HIERARCHY)
-default_sector = st.session_state.get("default_sector", SECTORS[1])
+default_sector = st.session_state.get("default_sector", SECTORS[0])
 sector = c4.selectbox("Sector", SECTORS, index=SECTORS.index(default_sector))
 
 c5, c6 = st.columns(2)

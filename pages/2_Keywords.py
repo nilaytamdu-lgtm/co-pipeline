@@ -18,7 +18,7 @@ st.title("Keyword Builder")
 st.caption("Apollo filters · LinkedIn boolean · Google dorks for your sector × signal")
 
 cols = st.columns(4)
-default_sector = st.session_state.get("default_sector", SECTORS[1])
+default_sector = st.session_state.get("default_sector", SECTORS[0])
 sector = cols[0].selectbox("Sector", SECTORS, index=SECTORS.index(default_sector))
 signal = cols[1].selectbox("Signal", SIGNALS)
 region = cols[2].text_input("Region", value="India")

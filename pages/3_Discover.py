@@ -25,7 +25,7 @@ if not secret("apis", "brave_api_key"):
     st.stop()
 
 c1, c2, c3 = st.columns(3)
-default_sector = st.session_state.get("default_sector", SECTORS[1])
+default_sector = st.session_state.get("default_sector", SECTORS[0])
 sector = c1.selectbox("Sector", SECTORS, index=SECTORS.index(default_sector))
 signal = c2.selectbox("Signal", SIGNALS)
 region = c3.text_input("Region", value="India")

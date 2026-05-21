@@ -1,23 +1,41 @@
 import streamlit as st
 
-# Five sector buckets for the summer cycle, mapped to their analyst owners.
+# Individual sectors for prospecting. The combined groupings (e.g. Swaroop's
+# SaaS + AI + Automation) are tracked separately in ANALYST_SECTORS below
+# for team-level task management.
 SECTORS = [
-    "SaaS + AI + Automation",
-    "FMCG / Food & Beverage / Consumer Brands / Consumer E-commerce",
-    "Logistics & Supply Chain + Climate-tech / Sustainability",
-    "Fintech + Edtech",
-    "Healthtech + NGOs / Social Impact",
+    "SaaS",
+    "AI",
+    "Automation",
+    "FMCG",
+    "Food & Beverage",
+    "Consumer Brands",
+    "Consumer E-commerce",
+    "Logistics & Supply Chain",
+    "Climate-tech",
+    "Sustainability",
+    "Fintech",
+    "Edtech",
+    "Healthtech",
+    "NGOs",
+    "Social Impact Organizations",
 ]
 
-OWNERS = {
-    "SaaS + AI + Automation": "Swaroop",
-    "FMCG / Food & Beverage / Consumer Brands / Consumer E-commerce": "Nilay",
-    "Logistics & Supply Chain + Climate-tech / Sustainability": "Praneel",
-    "Fintech + Edtech": "Pranav",
-    "Healthtech + NGOs / Social Impact": "Purav",
+ANALYSTS = ["Swaroop", "Nilay", "Praneel", "Pranav", "Purav"]
+
+# Which analyst owns which sectors (the combined buckets, broken out).
+ANALYST_SECTORS = {
+    "Swaroop": ["SaaS", "AI", "Automation"],
+    "Nilay": ["FMCG", "Food & Beverage", "Consumer Brands", "Consumer E-commerce"],
+    "Praneel": ["Logistics & Supply Chain", "Climate-tech", "Sustainability"],
+    "Pranav": ["Fintech", "Edtech"],
+    "Purav": ["Healthtech", "NGOs", "Social Impact Organizations"],
 }
 
-QUOTA = 600
+# Inverse mapping: sector -> analyst.
+OWNERS = {sector: analyst for analyst, sectors in ANALYST_SECTORS.items() for sector in sectors}
+
+QUOTA = 600  # per analyst, not per individual sector
 
 POC_HIERARCHY = [
     "Founder / Co-founder",

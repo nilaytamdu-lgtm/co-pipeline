@@ -65,7 +65,7 @@ if st.button("Test connection + ensure tab headers"):
 st.divider()
 
 st.subheader("Your sector default")
-sector = st.selectbox("Sector", SECTORS, index=1)
+sector = st.selectbox("Sector", SECTORS, index=0)
 st.session_state["default_sector"] = sector
 
 st.divider()
