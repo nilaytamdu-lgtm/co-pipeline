@@ -40,7 +40,7 @@ MESSAGE_STATUSES = ["Not Sent", "Sent", "Replied", "No Reply"]
 FOLLOWUP_STATUSES = ["Not Needed", "Follow-up 1 Sent", "Follow-up 2 Sent", "Closed - No Reply"]
 
 # Tab names in the shared Google Sheet — must match exactly.
-TAB_MASTER = "Client Outreach Tracker"
+TAB_MASTER = "Engagement Led Outreach"
 TAB_SIGNAL = "Signal Based Outreach"
 TAB_ORG = "Organization Based Outreach"
 TAB_PERSONAL = "Personal Outreach"

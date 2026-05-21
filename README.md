@@ -18,7 +18,7 @@ Open http://localhost:8501.
 
 1. **Gemini API key** — already in `.streamlit/secrets.toml`. Regenerate at https://aistudio.google.com/app/apikey before deploy, and paste the new key into Streamlit Cloud secrets only.
 2. **Google Sheet** — create a Sheet with 4 tabs named exactly:
-   - `Client Outreach Tracker`
+   - `Engagement Led Outreach`
    - `Signal Based Outreach`
    - `Organization Based Outreach`
    - `Personal Outreach`

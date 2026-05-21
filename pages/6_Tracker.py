@@ -5,6 +5,7 @@ from core.config import (
     TAB_SIGNAL,
     TAB_PERSONAL,
     TAB_MASTER,
+    TAB_ORG,
     sheet_id,
 )
 from core.ui import apply_branding
@@ -21,7 +22,10 @@ if not sheet_id():
 from core.sheets import read_df
 
 
-tab = st.selectbox("Tab", [TAB_SIGNAL, TAB_PERSONAL, TAB_MASTER])
+# Order mirrors the Sheet tabs left-to-right. Default to Signal Based — that's
+# where Discover/Enrich do most of their writes, so it's the operational tab.
+_TABS = [TAB_MASTER, TAB_SIGNAL, TAB_ORG, TAB_PERSONAL]
+tab = st.selectbox("Tab", _TABS, index=1)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
