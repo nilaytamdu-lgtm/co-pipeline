@@ -2,9 +2,11 @@ import pandas as pd
 import streamlit as st
 
 from core.config import (
+    ALL_USERS,
     CHANNEL_AUTOMATION,
     CHANNEL_LINKEDIN,
     RELATIONSHIP_ANALYSTS,
+    SECTORS,
     TAB_SIGNAL,
     TAB_PERSONAL,
     TAB_MASTER,
@@ -12,6 +14,17 @@ from core.config import (
     sheet_id,
 )
 from core.ui import apply_branding
+
+
+def _normalize_linkedin(url: str) -> str:
+    """Extract the LinkedIn slug for matching (the part after /in/)."""
+    if not url:
+        return ""
+    u = str(url).lower().strip()
+    u = u.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+    if "/in/" in u:
+        return u.split("/in/")[-1].split("?")[0].split("/")[0]
+    return u
 
 apply_branding()
 
@@ -62,6 +75,97 @@ if df.empty:
 # Keep the unfiltered data around for the backfill action — the filter section
 # below mutates `df` for display.
 df_full = df.copy()
+
+# Bulk fix sector + 180DC POC from CSV (one-off cleanup tool for rows that
+# were imported under the wrong sector)
+if tab == TAB_SIGNAL:
+    with st.expander("🔧 Bulk fix sector + 180DC POC from CSV", expanded=False):
+        st.caption(
+            "Upload a CSV (Instant Data Scraper format with POC Linkedin + POC Name + Company Name). "
+            "Pick the target sector + 180DC POC. Matches each CSV row to the tracker by **LinkedIn URL** "
+            "first, then by **POC Name + Company Name**. Updates matched rows."
+        )
+
+        bulk_csv = st.file_uploader("CSV", type=["csv"], key="bulk_fix_csv")
+
+        bc1, bc2 = st.columns(2)
+        bulk_sector = bc1.selectbox(
+            "Target sector",
+            SECTORS,
+            index=SECTORS.index(st.session_state.get("default_sector", SECTORS[0])) if st.session_state.get("default_sector", SECTORS[0]) in SECTORS else 0,
+            key="bulk_fix_sector",
+        )
+        default_user = st.session_state.get("current_user", "")
+        all_user_options = [""] + ALL_USERS
+        bulk_user = bc2.selectbox(
+            "Target 180DC POC",
+            options=all_user_options,
+            index=all_user_options.index(default_user) if default_user in all_user_options else 0,
+            key="bulk_fix_user",
+        )
+
+        if bulk_csv is not None:
+            try:
+                csv_df = pd.read_csv(bulk_csv)
+            except Exception as e:
+                st.error(f"Couldn't parse CSV: {e}")
+                csv_df = None
+
+            if csv_df is not None and not csv_df.empty:
+                # Map LinkedIn slugs + (name, company) pairs from the CSV
+                csv_li_col = next((c for c in csv_df.columns if "linkedin" in c.lower()), None)
+                csv_name_col = next((c for c in csv_df.columns if c.lower().strip() in ("poc name", "name", "full name")), None)
+                csv_company_col = next((c for c in csv_df.columns if c.lower().strip() in ("company name", "company")), None)
+
+                if not (csv_name_col and csv_company_col):
+                    st.error("CSV must have POC Name and Company Name columns to match.")
+                else:
+                    csv_li_slugs = set()
+                    csv_name_company = set()
+                    for _, r in csv_df.iterrows():
+                        if csv_li_col:
+                            slug = _normalize_linkedin(str(r.get(csv_li_col, "")))
+                            if slug:
+                                csv_li_slugs.add(slug)
+                        n = str(r.get(csv_name_col, "")).strip().lower()
+                        c = str(r.get(csv_company_col, "")).strip().lower()
+                        if n and c:
+                            csv_name_company.add((n, c))
+
+                    # Find matching rows in the tracker
+                    matches: list[int] = []
+                    for df_idx, trow in df_full.iterrows():
+                        tracker_slug = _normalize_linkedin(str(trow.get("POC LinkedIn", "")))
+                        if tracker_slug and tracker_slug in csv_li_slugs:
+                            matches.append(int(df_idx) + 2)  # +2 for 1-based + header row
+                            continue
+                        tn = str(trow.get("POC Name", "")).strip().lower()
+                        tc = str(trow.get("Name of Organisation", "")).strip().lower()
+                        if (tn, tc) in csv_name_company:
+                            matches.append(int(df_idx) + 2)
+
+                    st.write(f"**{len(matches)}** tracker rows matched out of **{len(csv_df)}** CSV rows.")
+                    if matches:
+                        st.caption(
+                            f"Will set: **Organisation Sector → {bulk_sector}**"
+                            + (f", **180DC POC → {bulk_user}**" if bulk_user else "")
+                        )
+
+                        if st.button("Apply bulk fix", type="primary"):
+                            from core.sheets import batch_update_column
+
+                            with st.spinner(f"Updating {len(matches)} rows..."):
+                                try:
+                                    row_to_sector = {r: bulk_sector for r in matches}
+                                    batch_update_column(TAB_SIGNAL, "Organisation Sector", row_to_sector)
+                                    if bulk_user:
+                                        row_to_owner = {r: bulk_user for r in matches}
+                                        batch_update_column(TAB_SIGNAL, "180DC POC", row_to_owner)
+                                    st.success(f"Updated {len(matches)} rows. Refreshing...")
+                                    _load.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Bulk fix failed: {e}")
 
 # Backfill blank Outreach Channel rows (one API call, batch update)
 if "Outreach Channel" in df_full.columns:
