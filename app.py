@@ -40,10 +40,11 @@ st.markdown(
 |---|---|
 | **Dashboard** | Leads per analyst, status breakdown, recent activity |
 | **Keywords** | Generate Apollo / LinkedIn / Google query strings for your sector × signal |
-| **Discover** | Find companies via Brave search → Gemini extraction |
-| **Enrich** | Find POCs and emails (Hunter → Snov chain, Brave domain lookup) |
-| **Email** | Draft LinkedIn notes and cold emails (Gemini, metrics-driven, no templates) |
+| **Discover** | Find companies via Brave search → Gemini extraction (signal-driven) |
+| **Enrich** | Find POCs and emails one by one (Hunter → Snov chain) |
+| **Email** | Draft a single LinkedIn note / DM / cold email |
 | **Tracker** | View / edit the shared Google Sheet, dedupe |
+| **Apollo Import** | Upload an Apollo CSV → review → bulk import + enrich + draft |
 | **Settings** | API keys, sector default, connection test |
 """
 )
