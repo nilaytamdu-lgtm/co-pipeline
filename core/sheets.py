@@ -11,7 +11,8 @@ Design notes:
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Optional
+import time
+from typing import Callable, Optional, TypeVar
 
 import gspread
 import pandas as pd
@@ -24,6 +25,33 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+T = TypeVar("T")
+
+
+def _retry_on_429(fn: Callable[[], T], max_attempts: int = 4, base_delay: float = 3.0) -> T:
+    """Run `fn`, retrying on Sheets API 429 with exponential backoff.
+
+    Google Sheets quota: 60 reads/min/user. When we trip it, the API returns
+    HTTP 429. Instead of bubbling up an error, sleep for a few seconds and
+    retry. The minute-quota window resets quickly, so 3-30s of backoff is
+    usually enough.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except gspread.exceptions.APIError as e:
+            msg = str(e)
+            if "429" in msg or "Quota" in msg or "quota" in msg:
+                last_err = e
+                if attempt < max_attempts - 1:
+                    time.sleep(base_delay * (2 ** attempt))
+                    continue
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("retry exhausted")
 
 
 @st.cache_resource(show_spinner=False)
@@ -67,22 +95,22 @@ def ensure_headers(tab: str, schema: list[str]) -> list[str]:
     existing order). Returns the post-merge header list.
     """
     ws = get_worksheet(tab)
-    existing = ws.row_values(1)
+    existing = _retry_on_429(lambda: ws.row_values(1))
     if not existing:
-        ws.update("A1", [schema])
+        _retry_on_429(lambda: ws.update("A1", [schema]))
         return list(schema)
 
     missing = [c for c in schema if c not in existing]
     if missing:
         merged = existing + missing
-        ws.update("A1", [merged])
+        _retry_on_429(lambda: ws.update("A1", [merged]))
         return merged
     return existing
 
 
 def read_df(tab: str) -> pd.DataFrame:
     ws = get_worksheet(tab, create_if_missing=False)
-    records = ws.get_all_records()
+    records = _retry_on_429(lambda: ws.get_all_records())
     return pd.DataFrame(records)
 
 
@@ -119,6 +147,28 @@ def append_row(tab: str, row: dict, schema: list[str], sector: Optional[str] = N
     ws = get_worksheet(tab)
     ws.append_row(ordered, value_input_option="USER_ENTERED")
     return len(ws.col_values(1))
+
+
+def append_rows(tab: str, rows: list[dict], schema: list[str], sector: Optional[str] = None) -> int:
+    """Batch-append many rows in a single API call.
+
+    Reads headers + max Sr No once, builds the full payload in memory, then
+    issues one `append_rows` API call. Reduces a 30-row import from ~90
+    Sheets API reads to ~3, keeping us under the 60/min/user quota.
+    """
+    if not rows:
+        return 0
+    headers = ensure_headers(tab, schema)
+    start_sr = next_sr_no(tab) if "Sr No." in headers else 0
+    payload: list[list[str]] = []
+    for i, row in enumerate(rows):
+        enriched = _autofill(row, sector=sector)
+        if "Sr No." in headers and "Sr No." not in enriched:
+            enriched["Sr No."] = start_sr + i
+        payload.append([str(enriched.get(h, "")) for h in headers])
+    ws = get_worksheet(tab)
+    _retry_on_429(lambda: ws.append_rows(payload, value_input_option="USER_ENTERED"))
+    return len(payload)
 
 
 def update_cells(tab: str, row_index: int, updates: dict) -> None:

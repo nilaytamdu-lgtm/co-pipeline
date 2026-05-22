@@ -289,12 +289,12 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
         st.warning("Nothing selected.")
         st.stop()
 
-    from core.sheets import append_row, read_df
+    from core.sheets import append_rows, read_df
     from core.enrich.finder import find_email
     from core.sources.brave import find_domain as brave_find_domain
 
     # Pre-build dedupe lookups. LinkedIn is the strongest key; name+company
-    # is the fallback when LinkedIn is missing on either side.
+    # is the fallback when LinkedIn is missing on either side. One read.
     existing_linkedin: set = set()
     existing_name_company: set = set()
     try:
@@ -308,21 +308,21 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
                     existing_linkedin.add(li)
                 if p and c:
                     existing_name_company.add((p, c))
-    except Exception:
-        pass
+    except Exception as e:
+        st.warning(f"Couldn't read existing rows for dedupe: {e}. Proceeding without dedupe.")
 
-    added, skipped, enriched = 0, 0, 0
+    # Phase 1: dedupe + enrich in memory. NO Sheets writes here.
+    skipped = 0
+    enriched = 0
     failures: list[str] = []
+    to_append: list[dict] = []
     progress = st.progress(0.0)
     log = st.empty()
-    imported_rows: list[dict] = []
 
     for i, (_, row) in enumerate(selected.iterrows(), 1):
         poc_name = str(row.get("POC Name", "")).strip()
         company = str(row.get("Name of Organisation", "")).strip()
         poc_li = str(row.get("POC LinkedIn", "")).strip()
-
-        signal_details = _compose_signal_details(row)
 
         candidate = {
             "Name of Organisation": company,
@@ -332,7 +332,7 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             "POC Job Title": str(row.get("POC Job Title", "")).strip(),
             "POC LinkedIn": poc_li,
             "POC Email": str(row.get("POC Email", "")).strip(),
-            "Signal Details": signal_details,
+            "Signal Details": _compose_signal_details(row),
             "Source of Signal": "Apollo (Instant Data Scraper)",
             "180DC POC": OWNERS.get(sector, ""),
             "Date of Entry": dt.date.today().isoformat(),
@@ -351,7 +351,7 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             progress.progress(i / n_selected)
             continue
 
-        # Enrich if needed and possible
+        # Enrich if needed (external APIs, not Google Sheets)
         if not candidate["POC Email"] and do_enrich:
             domain = _extract_domain(candidate["Organisation Website"])
             if not domain:
@@ -374,19 +374,21 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
                 except Exception as e:
                     failures.append(f"{poc_name}: Hunter failed ({e})")
 
-        try:
-            append_row(TAB_SIGNAL, candidate, SIGNAL_SCHEMA, sector=sector)
-            added += 1
-            if poc_li:
-                existing_linkedin.add(poc_li.lower())
-            existing_name_company.add(nc_key)
-            imported_rows.append(candidate)
-            log.caption(f"({i}/{n_selected}) added {poc_name} @ {company}")
-        except Exception as e:
-            failures.append(f"Append failed for {poc_name}: {e}")
-            skipped += 1
-
+        to_append.append(candidate)
+        if poc_li:
+            existing_linkedin.add(poc_li.lower())
+        existing_name_company.add(nc_key)
+        log.caption(f"({i}/{n_selected}) queued {poc_name} @ {company}")
         progress.progress(i / n_selected)
+
+    # Phase 2: single batch write to the Sheet (1 API call for all rows).
+    added = 0
+    if to_append:
+        with st.spinner(f"Writing {len(to_append)} rows to Sheet..."):
+            try:
+                added = append_rows(TAB_SIGNAL, to_append, SIGNAL_SCHEMA, sector=sector)
+            except Exception as e:
+                failures.append(f"Batch append failed: {e}")
 
     st.success(f"Added **{added}** · enriched **{enriched}** · skipped **{skipped}**")
     if failures:
@@ -394,7 +396,7 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             for f in failures:
                 st.text(f)
 
-    st.session_state["apollo_imported"] = imported_rows
+    st.session_state["apollo_imported"] = to_append[:added] if added else []
     st.session_state["apollo_imported_sector"] = sector
 
 # ---------- Step 5: bulk drafts ----------

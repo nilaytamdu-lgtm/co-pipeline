@@ -98,16 +98,32 @@ if st.button("Append selected to Sheet", type="primary"):
         st.warning("Nothing selected.")
         st.stop()
 
-    from core.sheets import append_row, dedupe_against
+    from core.sheets import append_rows, read_df
     from core.sources.discover import domain_for
 
     meta = st.session_state.get("discover_meta", {})
-    added, skipped = 0, 0
+
+    # Pre-build dedupe set in one read (avoids quota burn from per-row checks)
+    existing_companies: set = set()
+    try:
+        df_existing = read_df(TAB_SIGNAL)
+        if not df_existing.empty and "Name of Organisation" in df_existing.columns:
+            existing_companies = {str(c).strip().lower() for c in df_existing["Name of Organisation"] if str(c).strip()}
+    except Exception:
+        pass
+
+    to_append: list[dict] = []
+    skipped = 0
     progress = st.progress(0.0)
     for i, (_, row) in enumerate(selected.iterrows(), 1):
         company = str(row.get("company", "")).strip()
         if not company:
             skipped += 1
+            progress.progress(i / len(selected))
+            continue
+        if company.lower() in existing_companies:
+            skipped += 1
+            progress.progress(i / len(selected))
             continue
         domain = domain_for(company)
         candidate = {
@@ -120,16 +136,16 @@ if st.button("Append selected to Sheet", type="primary"):
             "180DC POC": OWNERS.get(meta.get("sector", sector), ""),
             "Date of Entry": dt.date.today().isoformat(),
         }
-        # Skip if same company already in tab (loose match on name)
-        existing = dedupe_against(TAB_SIGNAL, {"Name of Organisation": company}, keys=("Name of Organisation",))
-        if existing is not None:
-            skipped += 1
-        else:
-            try:
-                append_row(TAB_SIGNAL, candidate, SIGNAL_SCHEMA, sector=meta.get("sector", sector))
-                added += 1
-            except Exception as e:
-                st.error(f"Append failed for {company}: {e}")
-                skipped += 1
+        to_append.append(candidate)
+        existing_companies.add(company.lower())
         progress.progress(i / len(selected))
+
+    added = 0
+    if to_append:
+        try:
+            with st.spinner(f"Writing {len(to_append)} rows..."):
+                added = append_rows(TAB_SIGNAL, to_append, SIGNAL_SCHEMA, sector=meta.get("sector", sector))
+        except Exception as e:
+            st.error(f"Batch append failed: {e}")
+
     st.success(f"Added {added} leads · skipped {skipped}.")

@@ -31,7 +31,7 @@ except Exception as e:
     st.stop()
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _load() -> pd.DataFrame:
     frames = []
     for tab in (TAB_SIGNAL, TAB_PERSONAL):

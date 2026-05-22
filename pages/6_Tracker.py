@@ -28,16 +28,26 @@ _TABS = [TAB_MASTER, TAB_SIGNAL, TAB_ORG, TAB_PERSONAL]
 tab = st.selectbox("Tab", _TABS, index=1)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=180, show_spinner=False)
 def _load(tab_name: str) -> pd.DataFrame:
-    try:
-        return read_df(tab_name)
-    except Exception as e:
-        st.error(f"Read failed: {e}")
-        return pd.DataFrame()
+    return read_df(tab_name)
 
 
-df = _load(tab)
+try:
+    df = _load(tab)
+except Exception as e:
+    msg = str(e)
+    if "429" in msg or "Quota" in msg or "quota" in msg:
+        st.error(
+            "Sheets API quota hit (60 reads/min per service account). "
+            "Wait ~60 seconds, then click **Refresh cache** below."
+        )
+    else:
+        st.error(f"Read failed: {msg}")
+    if st.button("Refresh cache"):
+        _load.clear()
+        st.rerun()
+    st.stop()
 
 if df.empty:
     st.info("Tab is empty (or doesn't exist yet). Use Settings → Test connection to create headers.")
