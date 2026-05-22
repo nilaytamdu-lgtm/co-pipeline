@@ -5,6 +5,7 @@ from core.config import (
     ALL_USERS,
     CHANNEL_AUTOMATION,
     CHANNEL_LINKEDIN,
+    CSV_SECTOR_DEFAULTS,
     RELATIONSHIP_ANALYSTS,
     SECTORS,
     TAB_SIGNAL,
@@ -76,29 +77,24 @@ if df.empty:
 # below mutates `df` for display.
 df_full = df.copy()
 
-# Bulk fix sector + 180DC POC from CSV (one-off cleanup tool for rows that
-# were imported under the wrong sector)
+# Bulk fix sector + 180DC POC from CSV. Handles mixed-sector files by reading
+# each CSV row's own Sector value and mapping it (with auto-suggested
+# defaults + override per unique value) to one of the 15 app sectors.
 if tab == TAB_SIGNAL:
     with st.expander("🔧 Bulk fix sector + 180DC POC from CSV", expanded=False):
         st.caption(
-            "Upload a CSV (Instant Data Scraper format with POC Linkedin + POC Name + Company Name). "
-            "Pick the target sector + 180DC POC. Matches each CSV row to the tracker by **LinkedIn URL** "
-            "first, then by **POC Name + Company Name**. Updates matched rows."
+            "Upload a CSV (Instant Data Scraper format). Each row's sector comes from the CSV's own "
+            "**Sector** column — you map each unique CSV sector value to an app sector once, then the "
+            "tool applies per-row. Matches tracker rows by **POC LinkedIn URL** first, then by "
+            "**POC Name + Company Name**."
         )
 
         bulk_csv = st.file_uploader("CSV", type=["csv"], key="bulk_fix_csv")
 
-        bc1, bc2 = st.columns(2)
-        bulk_sector = bc1.selectbox(
-            "Target sector",
-            SECTORS,
-            index=SECTORS.index(st.session_state.get("default_sector", SECTORS[0])) if st.session_state.get("default_sector", SECTORS[0]) in SECTORS else 0,
-            key="bulk_fix_sector",
-        )
         default_user = st.session_state.get("current_user", "")
         all_user_options = [""] + ALL_USERS
-        bulk_user = bc2.selectbox(
-            "Target 180DC POC",
+        bulk_user = st.selectbox(
+            "Target 180DC POC (applies to ALL matched rows)",
             options=all_user_options,
             index=all_user_options.index(default_user) if default_user in all_user_options else 0,
             key="bulk_fix_user",
@@ -112,56 +108,106 @@ if tab == TAB_SIGNAL:
                 csv_df = None
 
             if csv_df is not None and not csv_df.empty:
-                # Map LinkedIn slugs + (name, company) pairs from the CSV
                 csv_li_col = next((c for c in csv_df.columns if "linkedin" in c.lower()), None)
                 csv_name_col = next((c for c in csv_df.columns if c.lower().strip() in ("poc name", "name", "full name")), None)
                 csv_company_col = next((c for c in csv_df.columns if c.lower().strip() in ("company name", "company")), None)
+                csv_sector_col = next((c for c in csv_df.columns if c.lower().strip() in ("sector", "industry")), None)
 
                 if not (csv_name_col and csv_company_col):
                     st.error("CSV must have POC Name and Company Name columns to match.")
                 else:
-                    csv_li_slugs = set()
-                    csv_name_company = set()
-                    for _, r in csv_df.iterrows():
+                    # Build per-CSV-sector mapping table
+                    sector_mapping: dict[str, str] = {}
+                    fallback_sector: str = SECTORS[0]
+
+                    if csv_sector_col:
+                        unique_csv_sectors = sorted(
+                            csv_df[csv_sector_col].dropna().astype(str).str.strip().replace("", pd.NA).dropna().unique().tolist()
+                        )
+                        if unique_csv_sectors:
+                            st.markdown("**Map each CSV sector to an app sector**")
+                            for csv_sec in unique_csv_sectors:
+                                n_rows = int((csv_df[csv_sector_col].astype(str).str.strip() == csv_sec).sum())
+                                default_app_sec = CSV_SECTOR_DEFAULTS.get(csv_sec.lower().strip(), SECTORS[0])
+                                idx = SECTORS.index(default_app_sec) if default_app_sec in SECTORS else 0
+                                sector_mapping[csv_sec] = st.selectbox(
+                                    f"`{csv_sec}` — {n_rows} rows",
+                                    SECTORS,
+                                    index=idx,
+                                    key=f"bulk_map_{csv_sec}",
+                                )
+                            fallback_sector = st.selectbox(
+                                "Fallback sector (used for rows with blank Sector in the CSV)",
+                                SECTORS,
+                                index=SECTORS.index(st.session_state.get("default_sector", SECTORS[0])) if st.session_state.get("default_sector", SECTORS[0]) in SECTORS else 0,
+                                key="bulk_fallback_sector",
+                            )
+                    else:
+                        st.warning("No `Sector` (or `Industry`) column in this CSV. Pick a single target sector for all rows.")
+                        fallback_sector = st.selectbox(
+                            "Target sector for all rows",
+                            SECTORS,
+                            index=SECTORS.index(st.session_state.get("default_sector", SECTORS[0])) if st.session_state.get("default_sector", SECTORS[0]) in SECTORS else 0,
+                            key="bulk_single_sector",
+                        )
+
+                    # Build CSV row → target sector map
+                    csv_row_sector: dict[int, str] = {}
+                    for csv_idx, r in csv_df.iterrows():
+                        if csv_sector_col:
+                            v = str(r.get(csv_sector_col, "")).strip()
+                            csv_row_sector[csv_idx] = sector_mapping.get(v, fallback_sector) if v else fallback_sector
+                        else:
+                            csv_row_sector[csv_idx] = fallback_sector
+
+                    # Index CSV rows by LinkedIn slug + (name, company) for matching
+                    li_to_csv_idx: dict[str, int] = {}
+                    nc_to_csv_idx: dict[tuple, int] = {}
+                    for csv_idx, r in csv_df.iterrows():
                         if csv_li_col:
                             slug = _normalize_linkedin(str(r.get(csv_li_col, "")))
-                            if slug:
-                                csv_li_slugs.add(slug)
+                            if slug and slug not in li_to_csv_idx:
+                                li_to_csv_idx[slug] = csv_idx
                         n = str(r.get(csv_name_col, "")).strip().lower()
                         c = str(r.get(csv_company_col, "")).strip().lower()
                         if n and c:
-                            csv_name_company.add((n, c))
+                            nc_to_csv_idx.setdefault((n, c), csv_idx)
 
-                    # Find matching rows in the tracker
-                    matches: list[int] = []
+                    # Walk the tracker; for each row, find matching CSV row's sector
+                    row_to_sector: dict[int, str] = {}
                     for df_idx, trow in df_full.iterrows():
+                        matched_csv_idx = None
                         tracker_slug = _normalize_linkedin(str(trow.get("POC LinkedIn", "")))
-                        if tracker_slug and tracker_slug in csv_li_slugs:
-                            matches.append(int(df_idx) + 2)  # +2 for 1-based + header row
-                            continue
-                        tn = str(trow.get("POC Name", "")).strip().lower()
-                        tc = str(trow.get("Name of Organisation", "")).strip().lower()
-                        if (tn, tc) in csv_name_company:
-                            matches.append(int(df_idx) + 2)
+                        if tracker_slug and tracker_slug in li_to_csv_idx:
+                            matched_csv_idx = li_to_csv_idx[tracker_slug]
+                        else:
+                            tn = str(trow.get("POC Name", "")).strip().lower()
+                            tc = str(trow.get("Name of Organisation", "")).strip().lower()
+                            if (tn, tc) in nc_to_csv_idx:
+                                matched_csv_idx = nc_to_csv_idx[(tn, tc)]
+                        if matched_csv_idx is not None:
+                            sheet_row = int(df_idx) + 2
+                            row_to_sector[sheet_row] = csv_row_sector[matched_csv_idx]
 
-                    st.write(f"**{len(matches)}** tracker rows matched out of **{len(csv_df)}** CSV rows.")
-                    if matches:
-                        st.caption(
-                            f"Will set: **Organisation Sector → {bulk_sector}**"
-                            + (f", **180DC POC → {bulk_user}**" if bulk_user else "")
-                        )
+                    st.write(f"**{len(row_to_sector)}** tracker rows matched out of **{len(csv_df)}** CSV rows.")
+
+                    # Show per-target-sector breakdown
+                    if row_to_sector:
+                        breakdown = pd.Series(list(row_to_sector.values())).value_counts()
+                        with st.expander("Breakdown by target sector", expanded=False):
+                            for sec, cnt in breakdown.items():
+                                st.write(f"- **{sec}**: {cnt} rows")
 
                         if st.button("Apply bulk fix", type="primary"):
                             from core.sheets import batch_update_column
 
-                            with st.spinner(f"Updating {len(matches)} rows..."):
+                            with st.spinner(f"Updating {len(row_to_sector)} rows..."):
                                 try:
-                                    row_to_sector = {r: bulk_sector for r in matches}
                                     batch_update_column(TAB_SIGNAL, "Organisation Sector", row_to_sector)
                                     if bulk_user:
-                                        row_to_owner = {r: bulk_user for r in matches}
+                                        row_to_owner = {r: bulk_user for r in row_to_sector}
                                         batch_update_column(TAB_SIGNAL, "180DC POC", row_to_owner)
-                                    st.success(f"Updated {len(matches)} rows. Refreshing...")
+                                    st.success(f"Updated {len(row_to_sector)} rows. Refreshing...")
                                     _load.clear()
                                     st.rerun()
                                 except Exception as e:

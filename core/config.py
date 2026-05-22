@@ -74,6 +74,58 @@ OWNERS: dict[str, str] = {sector: analyst for analyst, sectors in ANALYST_SECTOR
 CHANNEL_AUTOMATION = "Automation (email)"
 CHANNEL_LINKEDIN = "LinkedIn (manual)"
 
+# Granular CSV sector values (Apollo / LinkedIn Sales Nav industry names)
+# mapped to our 15-sector app vocabulary. Used as auto-suggested defaults
+# in the Tracker's "Bulk fix sector" tool. User can override any mapping.
+CSV_SECTOR_DEFAULTS: dict[str, str] = {
+    # Consumer / D2C
+    "consumer goods": "FMCG",
+    "cosmetics": "FMCG",
+    "food production": "FMCG",
+    "food & beverages": "Food & Beverage",
+    "food and beverages": "Food & Beverage",
+    "restaurants": "Food & Beverage",
+    "hospitality": "Food & Beverage",
+    "apparel & fashion": "Consumer Brands",
+    "apparel and fashion": "Consumer Brands",
+    "sporting goods": "Consumer Brands",
+    "luxury goods & jewelry": "Consumer Brands",
+    "retail": "Consumer E-commerce",
+    "internet": "Consumer E-commerce",
+    # Tech
+    "computer software": "SaaS",
+    "information technology and services": "SaaS",
+    "computer & network security": "SaaS",
+    # Health
+    "hospital & health care": "Healthtech",
+    "medical practice": "Healthtech",
+    "medical devices": "Healthtech",
+    "health, wellness and fitness": "Healthtech",
+    "pharmaceuticals": "Healthtech",
+    # Finance
+    "financial services": "Fintech",
+    "banking": "Fintech",
+    "investment management": "Fintech",
+    "insurance": "Fintech",
+    # Education
+    "education management": "Edtech",
+    "e-learning": "Edtech",
+    "higher education": "Edtech",
+    # Social
+    "non-profit organization management": "NGOs",
+    "civic & social organization": "Social Impact Organizations",
+    "government relations": "Social Impact Organizations",
+    # Logistics
+    "logistics and supply chain": "Logistics & Supply Chain",
+    "transportation/trucking/railroad": "Logistics & Supply Chain",
+    "warehousing": "Logistics & Supply Chain",
+    "package/freight delivery": "Logistics & Supply Chain",
+    # Climate / Sustainability
+    "renewables & environment": "Climate-tech",
+    "environmental services": "Sustainability",
+    "oil & energy": "Climate-tech",
+}
+
 QUOTA = 600  # per analyst, not per individual sector
 
 POC_HIERARCHY = [
