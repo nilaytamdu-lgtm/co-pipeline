@@ -262,18 +262,22 @@ has_brave = bool(secret("apis", "brave_api_key"))
 
 if not has_hunter:
     st.warning("Hunter not configured. Rows will import without emails.")
-elif not has_brave:
-    st.warning(
-        "Brave not configured. The app can't resolve domains from company names, "
-        "so Hunter can't run on this CSV. Rows will import without emails — fill "
-        "them in later via the **Enrich** page."
-    )
+else:
+    if has_brave:
+        st.info("Domain resolution: Brave (best) → free DNS guesser fallback.")
+    else:
+        st.info(
+            "Brave not configured, so domains will be guessed via a free DNS check "
+            "(catches most common Indian brand patterns like `slurrpfarm.com`). "
+            "Rows where the guess fails will import without emails — fill them in "
+            "manually via the **Enrich** page."
+        )
 
 do_enrich = st.checkbox(
-    "Resolve domain via Brave + find email via Hunter for each row",
-    value=has_hunter and has_brave,
-    disabled=not (has_hunter and has_brave),
-    help="One Brave call + one Hunter call per row that needs enrichment.",
+    "Find email via Hunter for each row (resolves domain first)",
+    value=has_hunter,
+    disabled=not has_hunter,
+    help="One Hunter call per row that needs enrichment. Domain resolution is free.",
 )
 
 
@@ -303,7 +307,11 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
 
     from core.sheets import append_rows, read_df
     from core.enrich.finder import find_email
-    from core.sources.brave import find_domain as brave_find_domain
+    from core.sources.domain_guess import guess_domain as dns_guess_domain
+    if has_brave:
+        from core.sources.brave import find_domain as brave_find_domain
+    else:
+        brave_find_domain = None
 
     # Pre-build dedupe lookups. LinkedIn is the strongest key; name+company
     # is the fallback when LinkedIn is missing on either side. One read.
@@ -366,11 +374,16 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
         # Enrich if needed (external APIs, not Google Sheets)
         if not candidate["POC Email"] and do_enrich:
             domain = _extract_domain(candidate["Organisation Website"])
-            if not domain:
+            if not domain and brave_find_domain is not None:
                 try:
                     domain = brave_find_domain(company) or ""
                 except Exception as e:
                     failures.append(f"{poc_name}: Brave domain lookup failed ({e})")
+            if not domain:
+                try:
+                    domain = dns_guess_domain(company) or ""
+                except Exception as e:
+                    failures.append(f"{poc_name}: DNS guess failed ({e})")
             if domain:
                 candidate["Organisation Website"] = f"https://{domain}"
                 parts = poc_name.split(" ", 1)

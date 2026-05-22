@@ -57,14 +57,26 @@ mode = st.radio("Mode", ["Manual lookup", "From Sheet (Signal Based Outreach)"],
 _brave_ready = bool(secret("apis", "brave_api_key"))
 
 
-def _lookup_domain(name: str) -> str | None:
-    if not _brave_ready or not name:
-        return None
+def _lookup_domain(name: str) -> tuple[str | None, str]:
+    """Try Brave first if configured, fall back to free DNS guess. Returns (domain, source)."""
+    if not name:
+        return None, ""
+    if _brave_ready:
+        try:
+            from core.sources.brave import find_domain
+            d = find_domain(name)
+            if d:
+                return d, "Brave"
+        except Exception:
+            pass
     try:
-        from core.sources.brave import find_domain
-        return find_domain(name)
+        from core.sources.domain_guess import guess_domain
+        d = guess_domain(name)
+        if d:
+            return d, "DNS guess"
     except Exception:
-        return None
+        pass
+    return None, ""
 
 
 if mode == "Manual lookup":
@@ -72,18 +84,19 @@ if mode == "Manual lookup":
     company = c1.text_input("Company (optional)", placeholder="e.g. Slurrp Farm", key="manual_company")
     domain = c2.text_input("Domain", placeholder="e.g. slurrpfarm.com", key="manual_domain", value=st.session_state.get("manual_domain_resolved", ""))
 
-    if _brave_ready and st.button("Auto-resolve domain from company name"):
+    if st.button("Guess domain from company name"):
         if not company:
             st.warning("Type a company name first.")
         else:
-            with st.spinner("Looking up domain via Brave..."):
-                resolved = _lookup_domain(company)
+            label = "Looking up via Brave..." if _brave_ready else "Trying common patterns + DNS check..."
+            with st.spinner(label):
+                resolved, source = _lookup_domain(company)
             if resolved:
                 st.session_state["manual_domain_resolved"] = resolved
-                st.success(f"Found: **{resolved}** — saved into the Domain field. Re-run if it looks wrong.")
+                st.success(f"Found: **{resolved}** (via {source}). Saved into the Domain field. Re-run if it looks wrong.")
                 st.rerun()
             else:
-                st.warning("Brave couldn't resolve. Type the domain by hand.")
+                st.warning("Couldn't resolve a domain. Type it manually — Google the company name, copy the address bar.")
 
     c3, c4 = st.columns(2)
     first = c3.text_input("First name (optional)", placeholder="e.g. Meghana")
@@ -151,15 +164,17 @@ else:
     pre_domain = row.get("Organisation Website", "").replace("https://", "").replace("http://", "").rstrip("/")
     domain_key = f"sheet_domain_{row_idx_df}"
     domain = st.text_input("Domain", value=st.session_state.get(domain_key, pre_domain), key=domain_key + "_input")
-    if _brave_ready and not domain and st.button("Auto-resolve from company name"):
+    if not domain and st.button("Guess domain from company name"):
         company_name = row.get("Name of Organisation", "")
-        with st.spinner("Looking up domain via Brave..."):
-            resolved = _lookup_domain(company_name)
+        label = "Looking up via Brave..." if _brave_ready else "Trying common patterns + DNS check..."
+        with st.spinner(label):
+            resolved, source = _lookup_domain(company_name)
         if resolved:
             st.session_state[domain_key] = resolved
+            st.toast(f"Found {resolved} via {source}")
             st.rerun()
         else:
-            st.warning("Brave couldn't resolve.")
+            st.warning("Couldn't resolve. Google the company name and paste the domain manually.")
     poc_name = row.get("POC Name", "") or ""
     parts = poc_name.strip().split(" ", 1)
     first = st.text_input("First name", value=parts[0] if parts else "")
