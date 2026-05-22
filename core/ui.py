@@ -14,7 +14,12 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.config import ANALYSTS, ANALYST_SECTORS
+from core.config import (
+    ALL_USERS,
+    ANALYST_SECTORS,
+    USER_CLUSTERS,
+    USER_TO_CLUSTER,
+)
 
 # Brand palette (per 180DC NITW guidelines)
 BRAND_DARK = "#134f5c"   # dark teal — headers
@@ -169,58 +174,89 @@ def _render_logo_in_sidebar() -> None:
     st.sidebar.markdown('<div class="brand-tagline">Client Outreach Pipeline</div>', unsafe_allow_html=True)
 
 
-def _render_analyst_picker() -> None:
+def _build_picker_options() -> list[str]:
+    """Build the option list grouped by cluster. Each label looks like 'Nilay (Analyst)'."""
+    out: list[str] = ["(pick yourself)"]
+    for cluster, users in USER_CLUSTERS.items():
+        for u in users:
+            out.append(f"{u} ({cluster})")
+    return out
+
+
+def _parse_user(label: str) -> str:
+    """Pull the user's name out of a picker label like 'Nilay (Analyst)'."""
+    return label.split(" (")[0]
+
+
+def _render_user_picker() -> None:
     """Sidebar widget that asks 'I am ...' and persists the pick.
 
     Persistence chain:
-    1. URL query param ?analyst=<name> (survives browser reload + bookmarking)
-    2. st.session_state["current_analyst"] (survives in-session navigation)
-    3. If neither set, default to no selection — user must pick once.
+    1. URL query param ?user=<name> (survives browser reload + bookmarking)
+    2. st.session_state["current_user"] (survives in-session navigation)
+    3. If neither is set, default to no selection — user must pick once.
 
-    Side effects when an analyst is selected:
-    - st.session_state["current_analyst"] is set
-    - URL is rewritten to include ?analyst=<name>
-    - st.session_state["default_sector"] is initialized to that analyst's
-      first allocated sector IF not already set this session
+    Side effects when a user is selected:
+    - st.session_state["current_user"] is set
+    - st.session_state["current_cluster"] is set (Analyst | EB | Advisor | President)
+    - URL is rewritten to include ?user=<name>
+    - st.session_state["default_sector"] hydrates from ANALYST_SECTORS[user][0]
+      if the user is an Analyst with allocated sectors AND default_sector
+      isn't already set this session.
     """
     qp = st.query_params
-    url_val = qp.get("analyst") if hasattr(qp, "get") else None
+    url_val = qp.get("user") if hasattr(qp, "get") else None
+    # Backcompat: read old ?analyst= param too
+    if not url_val and hasattr(qp, "get"):
+        url_val = qp.get("analyst")
 
     # First-load hydration from URL
-    if "current_analyst" not in st.session_state and url_val in ANALYSTS:
-        st.session_state["current_analyst"] = url_val
+    if "current_user" not in st.session_state and url_val in ALL_USERS:
+        st.session_state["current_user"] = url_val
+        st.session_state["current_cluster"] = USER_TO_CLUSTER.get(url_val, "")
         sectors = ANALYST_SECTORS.get(url_val, [])
         if sectors and "default_sector" not in st.session_state:
             st.session_state["default_sector"] = sectors[0]
 
-    current = st.session_state.get("current_analyst")
-    options = ["(pick yourself)"] + ANALYSTS
-    idx = ANALYSTS.index(current) + 1 if current in ANALYSTS else 0
+    current = st.session_state.get("current_user")
+    options = _build_picker_options()
+    idx = 0
+    if current in ALL_USERS:
+        try:
+            idx = options.index(f"{current} ({USER_TO_CLUSTER.get(current, '')})")
+        except ValueError:
+            idx = 0
 
-    selected = st.sidebar.selectbox(
+    selected_label = st.sidebar.selectbox(
         "I am",
         options=options,
         index=idx,
-        key="_analyst_picker",
-        help="Pick once per session. Sector dropdowns default to your allocated sectors, and the URL gets updated so a bookmark remembers you.",
+        key="_user_picker",
+        help="Pick once per session. URL gets updated so a bookmark remembers you.",
     )
 
-    if selected != "(pick yourself)":
-        prev = st.session_state.get("current_analyst")
-        if prev != selected:
-            st.session_state["current_analyst"] = selected
-            sectors = ANALYST_SECTORS.get(selected, [])
+    if selected_label != "(pick yourself)":
+        user = _parse_user(selected_label)
+        cluster = USER_TO_CLUSTER.get(user, "")
+        prev = st.session_state.get("current_user")
+        if prev != user:
+            st.session_state["current_user"] = user
+            st.session_state["current_cluster"] = cluster
+            sectors = ANALYST_SECTORS.get(user, [])
             if sectors:
                 st.session_state["default_sector"] = sectors[0]
             try:
-                st.query_params["analyst"] = selected
+                st.query_params["user"] = user
+                # Clean up the older param name if it's still in the URL
+                if "analyst" in st.query_params:
+                    del st.query_params["analyst"]
             except Exception:
                 pass
             st.rerun()
 
 
 def apply_branding() -> None:
-    """Inject brand CSS + render the sidebar logo block + analyst picker."""
+    """Inject brand CSS + render the sidebar logo block + user picker."""
     st.markdown(_CSS, unsafe_allow_html=True)
     _render_logo_in_sidebar()
-    _render_analyst_picker()
+    _render_user_picker()

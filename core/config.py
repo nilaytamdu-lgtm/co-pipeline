@@ -21,10 +21,37 @@ SECTORS = [
     "Social Impact Organizations",
 ]
 
-ANALYSTS = ["Swaroop", "Nilay", "Praneel", "Pranav", "Purav"]
+# All 180DC NITW members, grouped by cluster. The "I am" picker in the
+# sidebar uses this; the 180DC POC column gets set to whoever's logged in
+# (NOT derived from OWNERS[sector] anymore — that didn't make sense for
+# EB / Advisors / Presidents who help out on imports).
+USER_CLUSTERS: dict[str, list[str]] = {
+    "Analyst": [
+        "Nilay",
+        "Shriya",
+        "Praneel",
+        "Pranav",
+        "Purav",
+        "Sreeshanth",
+        "Swaroop",
+        "Nithik",
+        "Vinoothna",
+    ],
+    "EB": ["Rasesh", "Aby", "Srihan", "Saqib", "Rishav"],
+    "Advisor": ["Disha", "Ashwattha", "Om"],
+    "President": ["Daivik", "Rishi"],
+}
 
-# Which analyst owns which sectors (the combined buckets, broken out).
-ANALYST_SECTORS = {
+ALL_USERS: list[str] = [u for users in USER_CLUSTERS.values() for u in users]
+USER_TO_CLUSTER: dict[str, str] = {u: c for c, users in USER_CLUSTERS.items() for u in users}
+
+# Backcompat: still expose `ANALYSTS` as just the names in the Analyst cluster.
+ANALYSTS = USER_CLUSTERS["Analyst"]
+
+# Sector ownership for the 5 analysts who run the AUTOMATION outreach channel
+# (Apollo Import → Enrich → email-based outreach). Used for default-sector
+# hints only — not for the 180DC POC column on new imports.
+ANALYST_SECTORS: dict[str, list[str]] = {
     "Swaroop": ["SaaS", "AI", "Automation"],
     "Nilay": ["FMCG", "Food & Beverage", "Consumer Brands", "Consumer E-commerce"],
     "Praneel": ["Logistics & Supply Chain", "Climate-tech", "Sustainability"],
@@ -32,8 +59,20 @@ ANALYST_SECTORS = {
     "Purav": ["Healthtech", "NGOs", "Social Impact Organizations"],
 }
 
-# Inverse mapping: sector -> analyst.
-OWNERS = {sector: analyst for analyst, sectors in ANALYST_SECTORS.items() for sector in sectors}
+# Analysts who primarily run the automation (email) outreach channel.
+AUTOMATION_ANALYSTS: list[str] = list(ANALYST_SECTORS.keys())
+
+# Analysts who primarily run the Engagement Led + Organization Based channels
+# (LinkedIn-led, no sector specialization).
+RELATIONSHIP_ANALYSTS: list[str] = ["Shriya", "Sreeshanth", "Nithik", "Vinoothna"]
+
+# Sector → suggested analyst (informational hint, not used to write the
+# 180DC POC column anymore).
+OWNERS: dict[str, str] = {sector: analyst for analyst, sectors in ANALYST_SECTORS.items() for sector in sectors}
+
+# Outreach channel values for the new "Outreach Channel" column.
+CHANNEL_AUTOMATION = "Automation (email)"
+CHANNEL_LINKEDIN = "LinkedIn (manual)"
 
 QUOTA = 600  # per analyst, not per individual sector
 
@@ -142,6 +181,7 @@ SIGNAL_SCHEMA = [
     "Signal Observed",
     "Signal Details",
     "Source of Signal",
+    "Outreach Channel",          # Automation (email) | LinkedIn (manual)
     "POC Name",
     "POC Job Title",
     "POC LinkedIn",

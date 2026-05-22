@@ -32,7 +32,11 @@ import streamlit as st
 
 from core.config import (
     ANALYST_SECTORS,
+    AUTOMATION_ANALYSTS,
+    CHANNEL_AUTOMATION,
+    CHANNEL_LINKEDIN,
     OWNERS,
+    RELATIONSHIP_ANALYSTS,
     SECTORS,
     SIGNALS,
     SIGNAL_SCHEMA,
@@ -46,6 +50,16 @@ apply_branding()
 
 st.title("Apollo Import")
 st.caption("Instant Data Scraper CSV → review → import → enrich → bulk drafts")
+
+# Heads-up for users whose primary work isn't automation outreach
+_current_user_top = st.session_state.get("current_user")
+if _current_user_top and _current_user_top in RELATIONSHIP_ANALYSTS:
+    st.info(
+        f"Hey {_current_user_top} — this page is for the **automation (email) channel**, which the "
+        f"sector analysts ({', '.join(AUTOMATION_ANALYSTS)}) primarily run. "
+        "Your work on **Engagement Led** and **Organization Based** outreach lives in the "
+        "**Tracker** tab. You can still use this page if you want — just flagging."
+    )
 
 
 # ---------- Target field definitions ----------
@@ -214,7 +228,9 @@ st.subheader("Batch sector")
 st.caption("Drives analyst routing. The CSV's specific sector value is preserved separately in Signal Details.")
 
 default_sector = st.session_state.get("default_sector", SECTORS[0])
-current_analyst = st.session_state.get("current_analyst")
+current_user = st.session_state.get("current_user")
+suggested_owner = OWNERS.get(default_sector, "")
+
 scol1, scol2 = st.columns([3, 2])
 sector = scol1.selectbox(
     "Sector",
@@ -222,26 +238,23 @@ sector = scol1.selectbox(
     index=SECTORS.index(default_sector) if default_sector in SECTORS else 0,
     label_visibility="collapsed",
 )
-analyst = OWNERS.get(sector, "—")
+suggested = OWNERS.get(sector, "")
 
-# Color-code the preview based on whether the routing matches the user
-if current_analyst and analyst == current_analyst:
-    scol2.markdown(f"**180DC POC:** :green[{analyst}]")
-elif current_analyst and analyst != current_analyst:
-    scol2.markdown(f"**180DC POC:** :red[{analyst} (not you!)]")
-else:
-    scol2.markdown(f"**180DC POC:** {analyst}")
+scol2.markdown(f"**180DC POC:** :green[{current_user or '—'}]")
 
-if not current_analyst:
-    st.warning("Pick yourself in the **I am** dropdown at the top of the sidebar first. Otherwise the app can't tell if the sector below routes to the right person.")
-elif analyst != current_analyst:
-    st.error(
-        f"⚠️ Sector **{sector}** routes to **{analyst}**, but you picked yourself as **{current_analyst}**. "
-        f"If you're importing on someone else's behalf, that's fine — otherwise change the sector above to one of: "
-        f"{', '.join(ANALYST_SECTORS.get(current_analyst, []))}."
-    )
+if not current_user:
+    st.warning("Pick yourself in the **I am** dropdown at the top of the sidebar first. Imported rows get tagged with whoever's logged in.")
 else:
-    st.caption(f"Rows will be tagged with sector **{sector}** and routed to **{analyst}**.")
+    msg = f"Rows will be tagged with sector **{sector}** and 180DC POC **{current_user}**."
+    if suggested and suggested != current_user and current_user in ANALYST_SECTORS:
+        # Only show the cross-allocation hint for Analysts who have an allocation
+        my_sectors = ", ".join(ANALYST_SECTORS.get(current_user, []))
+        msg += (
+            f" Heads up: sector **{sector}** is normally **{suggested}**'s allocation. "
+            f"You're tagged as the 180DC POC regardless, but if this is a mistake, "
+            f"your sectors are: {my_sectors}."
+        )
+    st.caption(msg)
 
 st.subheader("Review and select")
 preview_cols = ["POC Name", "POC Job Title", "Name of Organisation", "POC LinkedIn", "Location", "CSV Sector"]
@@ -366,7 +379,7 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             "POC Email": str(row.get("POC Email", "")).strip(),
             "Signal Details": _compose_signal_details(row),
             "Source of Signal": "Apollo (Instant Data Scraper)",
-            "180DC POC": OWNERS.get(sector, ""),
+            "180DC POC": current_user or OWNERS.get(sector, ""),
             "Date of Entry": dt.date.today().isoformat(),
         }
 
@@ -411,11 +424,17 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
                 except Exception as e:
                     failures.append(f"{poc_name}: Hunter failed ({e})")
 
+        # Decide outreach channel based on final email state.
+        # Email present (from CSV or enriched) → Automation. Otherwise LinkedIn.
+        candidate["Outreach Channel"] = (
+            CHANNEL_AUTOMATION if candidate.get("POC Email") else CHANNEL_LINKEDIN
+        )
+
         to_append.append(candidate)
         if poc_li:
             existing_linkedin.add(poc_li.lower())
         existing_name_company.add(nc_key)
-        log.caption(f"({i}/{n_selected}) queued {poc_name} @ {company}")
+        log.caption(f"({i}/{n_selected}) queued {poc_name} @ {company} → {candidate['Outreach Channel']}")
         progress.progress(i / n_selected)
 
     # Phase 2: single batch write to the Sheet (1 API call for all rows).
@@ -427,7 +446,13 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             except Exception as e:
                 failures.append(f"Batch append failed: {e}")
 
-    st.success(f"Added **{added}** · enriched **{enriched}** · skipped **{skipped}**")
+    n_automation = sum(1 for r in to_append[:added] if r.get("Outreach Channel") == CHANNEL_AUTOMATION)
+    n_linkedin = sum(1 for r in to_append[:added] if r.get("Outreach Channel") == CHANNEL_LINKEDIN)
+
+    st.success(
+        f"Added **{added}** rows · enriched **{enriched}** emails · skipped **{skipped}** duplicates\n\n"
+        f"→ **{n_automation}** ready for email automation · **{n_linkedin}** for LinkedIn outreach"
+    )
     if failures:
         with st.expander(f"{len(failures)} failures / warnings"):
             for f in failures:

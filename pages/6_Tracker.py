@@ -2,6 +2,9 @@ import pandas as pd
 import streamlit as st
 
 from core.config import (
+    CHANNEL_AUTOMATION,
+    CHANNEL_LINKEDIN,
+    RELATIONSHIP_ANALYSTS,
     TAB_SIGNAL,
     TAB_PERSONAL,
     TAB_MASTER,
@@ -22,10 +25,13 @@ if not sheet_id():
 from core.sheets import read_df
 
 
-# Order mirrors the Sheet tabs left-to-right. Default to Signal Based — that's
-# where Discover/Enrich do most of their writes, so it's the operational tab.
+# Tab order mirrors the Sheet. Default tab depends on the user's specialty:
+# automation analysts work in Signal Based; relationship analysts (Shriya,
+# Sreeshanth, Nithik, Vinoothna) work in Engagement Led + Organization Based.
 _TABS = [TAB_MASTER, TAB_SIGNAL, TAB_ORG, TAB_PERSONAL]
-tab = st.selectbox("Tab", _TABS, index=1)
+_current_user = st.session_state.get("current_user")
+_default_idx = 0 if _current_user in RELATIONSHIP_ANALYSTS else 1
+tab = st.selectbox("Tab", _TABS, index=_default_idx)
 
 
 @st.cache_data(ttl=180, show_spinner=False)
@@ -59,6 +65,24 @@ query = f1.text_input("Search (any column, case-insensitive)")
 if query:
     mask = df.apply(lambda r: r.astype(str).str.contains(query, case=False, na=False)).any(axis=1)
     df = df[mask]
+
+# Outreach Channel filter — only meaningful on the Signal Based tab where the column exists
+if "Outreach Channel" in df.columns:
+    channel_options = ["All", CHANNEL_AUTOMATION, CHANNEL_LINKEDIN, "(blank)"]
+    channel_pick = f2.selectbox("Outreach Channel", channel_options, index=0)
+    if channel_pick == CHANNEL_AUTOMATION:
+        df = df[df["Outreach Channel"] == CHANNEL_AUTOMATION]
+    elif channel_pick == CHANNEL_LINKEDIN:
+        df = df[df["Outreach Channel"] == CHANNEL_LINKEDIN]
+    elif channel_pick == "(blank)":
+        df = df[df["Outreach Channel"].fillna("").str.strip() == ""]
+
+# Channel split summary
+if "Outreach Channel" in df.columns and not df.empty:
+    n_auto = int((df["Outreach Channel"] == CHANNEL_AUTOMATION).sum())
+    n_li = int((df["Outreach Channel"] == CHANNEL_LINKEDIN).sum())
+    n_blank = int((df["Outreach Channel"].fillna("").str.strip() == "").sum())
+    st.caption(f"Showing **{len(df)}** rows · {n_auto} for Automation · {n_li} for LinkedIn · {n_blank} blank channel")
 
 st.dataframe(df, width="stretch", hide_index=True, height=500)
 
