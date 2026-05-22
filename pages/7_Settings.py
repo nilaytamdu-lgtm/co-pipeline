@@ -1,6 +1,7 @@
 import streamlit as st
 
 from core.config import (
+    OWNERS,
     SECTORS,
     TAB_MASTER,
     TAB_SIGNAL,
@@ -65,8 +66,23 @@ if st.button("Test connection + ensure tab headers"):
 st.divider()
 
 st.subheader("Your sector default")
-sector = st.selectbox("Sector", SECTORS, index=0)
+st.caption("Pick once per session. Other pages use this as the pre-selected sector and the 180DC POC routing.")
+
+# Default to whatever's already in session, else SaaS at index 0.
+current = st.session_state.get("default_sector", SECTORS[0])
+sector = st.selectbox(
+    "Sector",
+    SECTORS,
+    index=SECTORS.index(current) if current in SECTORS else 0,
+)
 st.session_state["default_sector"] = sector
+
+analyst = OWNERS.get(sector, "unassigned")
+st.markdown(f"**180DC POC for this sector:** :green[{analyst}]")
+st.caption(
+    "If this name doesn't match you, change the sector above. "
+    "Each analyst's allocated sectors are mapped in `core/config.py` (ANALYST_SECTORS)."
+)
 
 st.divider()
 

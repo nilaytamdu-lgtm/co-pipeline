@@ -211,12 +211,24 @@ if clean.empty:
 st.divider()
 st.subheader("Batch sector")
 st.caption("Drives analyst routing. The CSV's specific sector value is preserved separately in Signal Details.")
+
 default_sector = st.session_state.get("default_sector", SECTORS[0])
-sector = st.selectbox(
+scol1, scol2 = st.columns([3, 2])
+sector = scol1.selectbox(
     "Sector",
     SECTORS,
     index=SECTORS.index(default_sector) if default_sector in SECTORS else 0,
     label_visibility="collapsed",
+)
+analyst = OWNERS.get(sector, "—")
+scol2.markdown(
+    f"**180DC POC:** :green[{analyst}]"
+    if analyst != "—"
+    else f"**180DC POC:** :red[unassigned]"
+)
+st.caption(
+    f"All imported rows will be tagged with sector **{sector}** and routed to **{analyst}**. "
+    "If that's wrong, change the sector above before importing."
 )
 
 st.subheader("Review and select")
