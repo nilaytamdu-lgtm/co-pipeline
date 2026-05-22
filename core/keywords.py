@@ -10,7 +10,7 @@ terms the static map can't anticipate.
 """
 from __future__ import annotations
 
-from core.config import POC_HIERARCHY
+from core.config import JOB_TITLES, POC_HIERARCHY
 
 # Industries here use Apollo's display names. Tweak as you find what
 # actually returns volume in your account.
@@ -170,10 +170,16 @@ SIZE_BANDS = {
 }
 
 
-def build_apollo(sector: str, signal: str, region: str, size_band: str) -> dict:
+def default_titles() -> list[str]:
+    """Every concrete title across all 4 POC tiers."""
+    return [t for tier in POC_HIERARCHY for t in JOB_TITLES.get(tier, [])]
+
+
+def build_apollo(sector: str, signal: str, region: str, size_band: str, titles: list[str] | None = None) -> dict:
     s = SECTOR_PROFILE.get(sector, {})
     sig = SIGNAL_PROFILE.get(signal, {})
-    titles = [h.split(" / ")[0] for h in POC_HIERARCHY]  # primary title per tier
+    if titles is None:
+        titles = default_titles()
     return {
         "industries": ", ".join(s.get("industries", [])),
         "keywords": ", ".join(s.get("keywords", []) + sig.get("keywords", [])),

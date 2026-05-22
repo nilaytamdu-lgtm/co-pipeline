@@ -2,7 +2,7 @@ import json
 
 import streamlit as st
 
-from core.config import SECTORS, SIGNALS
+from core.config import JOB_TITLES, POC_HIERARCHY, SECTORS, SIGNALS
 from core.keywords import (
     SIZE_BANDS,
     build_apollo,
@@ -24,13 +24,41 @@ signal = cols[1].selectbox("Signal", SIGNALS)
 region = cols[2].text_input("Region", value="India")
 size_band = cols[3].selectbox("Company size", list(SIZE_BANDS.keys()), index=1)
 
-apollo = build_apollo(sector, signal, region, size_band)
+st.subheader("POC tiers (per our hierarchy)")
+st.caption("Pick which tiers you want to chase. By default all 4 tiers are on. Each tier expands to concrete job titles that go into Apollo's filter.")
+selected_tiers = st.multiselect(
+    "Tiers",
+    options=POC_HIERARCHY,
+    default=POC_HIERARCHY,
+    label_visibility="collapsed",
+)
+
+selected_titles: list[str] = []
+with st.expander("Fine-tune individual job titles (advanced)", expanded=False):
+    st.caption("Toggle off any title that doesn't apply to your sector. Whatever stays here ends up in the Apollo 'Person titles' filter.")
+    for tier in selected_tiers:
+        tier_titles = JOB_TITLES.get(tier, [])
+        chosen = st.multiselect(
+            tier,
+            options=tier_titles,
+            default=tier_titles,
+            key=f"titles_{tier}",
+        )
+        selected_titles.extend(chosen)
+
+# If user collapsed the expander without touching it, st.session_state may not
+# have keys yet. Fall back to all titles from selected tiers.
+if not selected_titles:
+    selected_titles = [t for tier in selected_tiers for t in JOB_TITLES.get(tier, [])]
+
+apollo = build_apollo(sector, signal, region, size_band, titles=selected_titles)
 li_query = build_linkedin(sector, signal, region)
 dorks = build_google_dorks(sector, signal)
 
 st.divider()
 
 st.subheader("Apollo — paste into the relevant filter")
+st.caption(f"{len(selected_titles)} job titles selected across {len(selected_tiers)} tier(s).")
 st.code(f"Industries:        {apollo['industries']}", language="text")
 st.code(f"Keywords:          {apollo['keywords']}", language="text")
 st.code(f"Person titles:     {apollo['person_titles']}", language="text")

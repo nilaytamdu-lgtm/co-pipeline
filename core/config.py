@@ -44,6 +44,59 @@ POC_HIERARCHY = [
     "Hiring / TA Lead",
 ]
 
+# Concrete job titles per POC tier. These are what Apollo's title filter
+# actually wants (Apollo doesn't match "Founder / Co-founder" as one query,
+# it wants "Founder" OR "Co-founder" as separate entries).
+JOB_TITLES = {
+    "Founder / Co-founder": [
+        "Founder",
+        "Co-founder",
+        "Cofounder",
+        "CEO",
+        "Chief Executive Officer",
+        "Founder & CEO",
+        "Founding Partner",
+        "Managing Director",
+    ],
+    "Operations / Growth Lead": [
+        "COO",
+        "Chief Operating Officer",
+        "Head of Operations",
+        "VP Operations",
+        "Director of Operations",
+        "Head of Growth",
+        "VP Growth",
+        "Growth Lead",
+        "Head of Business",
+        "Business Head",
+        "Director of Growth",
+    ],
+    "Product / Strategy Lead": [
+        "CPO",
+        "Chief Product Officer",
+        "Head of Product",
+        "VP Product",
+        "Product Lead",
+        "Director of Product",
+        "Head of Strategy",
+        "VP Strategy",
+        "Director of Strategy",
+        "Chief Strategy Officer",
+    ],
+    "Hiring / TA Lead": [
+        "Head of Talent",
+        "Talent Acquisition Lead",
+        "TA Manager",
+        "Talent Acquisition Manager",
+        "Head of People",
+        "Head of HR",
+        "HR Head",
+        "VP People",
+        "Recruiting Lead",
+        "Head of Recruiting",
+    ],
+}
+
 SIGNALS = [
     "Recent funding",
     "Hiring activity",
