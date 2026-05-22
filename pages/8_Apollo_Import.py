@@ -31,6 +31,7 @@ import pandas as pd
 import streamlit as st
 
 from core.config import (
+    ANALYST_SECTORS,
     OWNERS,
     SECTORS,
     SIGNALS,
@@ -213,6 +214,7 @@ st.subheader("Batch sector")
 st.caption("Drives analyst routing. The CSV's specific sector value is preserved separately in Signal Details.")
 
 default_sector = st.session_state.get("default_sector", SECTORS[0])
+current_analyst = st.session_state.get("current_analyst")
 scol1, scol2 = st.columns([3, 2])
 sector = scol1.selectbox(
     "Sector",
@@ -221,15 +223,25 @@ sector = scol1.selectbox(
     label_visibility="collapsed",
 )
 analyst = OWNERS.get(sector, "—")
-scol2.markdown(
-    f"**180DC POC:** :green[{analyst}]"
-    if analyst != "—"
-    else f"**180DC POC:** :red[unassigned]"
-)
-st.caption(
-    f"All imported rows will be tagged with sector **{sector}** and routed to **{analyst}**. "
-    "If that's wrong, change the sector above before importing."
-)
+
+# Color-code the preview based on whether the routing matches the user
+if current_analyst and analyst == current_analyst:
+    scol2.markdown(f"**180DC POC:** :green[{analyst}]")
+elif current_analyst and analyst != current_analyst:
+    scol2.markdown(f"**180DC POC:** :red[{analyst} (not you!)]")
+else:
+    scol2.markdown(f"**180DC POC:** {analyst}")
+
+if not current_analyst:
+    st.warning("Pick yourself in the **I am** dropdown at the top of the sidebar first. Otherwise the app can't tell if the sector below routes to the right person.")
+elif analyst != current_analyst:
+    st.error(
+        f"⚠️ Sector **{sector}** routes to **{analyst}**, but you picked yourself as **{current_analyst}**. "
+        f"If you're importing on someone else's behalf, that's fine — otherwise change the sector above to one of: "
+        f"{', '.join(ANALYST_SECTORS.get(current_analyst, []))}."
+    )
+else:
+    st.caption(f"Rows will be tagged with sector **{sector}** and routed to **{analyst}**.")
 
 st.subheader("Review and select")
 preview_cols = ["POC Name", "POC Job Title", "Name of Organisation", "POC LinkedIn", "Location", "CSV Sector"]

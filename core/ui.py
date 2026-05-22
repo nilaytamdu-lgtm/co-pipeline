@@ -2,12 +2,19 @@
 
 Apply at the top of every page via `apply_branding()`. Pages keep their
 existing st.title / st.caption calls; the CSS restyles them in-place.
+
+Also handles the "I am ..." analyst picker that persists across page
+navigations and browser reloads via URL query params. This is what makes
+sector defaults stick to the right person so rows don't get tagged
+under the wrong analyst on import.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import streamlit as st
+
+from core.config import ANALYSTS, ANALYST_SECTORS
 
 # Brand palette (per 180DC NITW guidelines)
 BRAND_DARK = "#134f5c"   # dark teal — headers
@@ -162,10 +169,58 @@ def _render_logo_in_sidebar() -> None:
     st.sidebar.markdown('<div class="brand-tagline">Client Outreach Pipeline</div>', unsafe_allow_html=True)
 
 
-_APPLIED_KEY = "_branding_applied"
+def _render_analyst_picker() -> None:
+    """Sidebar widget that asks 'I am ...' and persists the pick.
+
+    Persistence chain:
+    1. URL query param ?analyst=<name> (survives browser reload + bookmarking)
+    2. st.session_state["current_analyst"] (survives in-session navigation)
+    3. If neither set, default to no selection — user must pick once.
+
+    Side effects when an analyst is selected:
+    - st.session_state["current_analyst"] is set
+    - URL is rewritten to include ?analyst=<name>
+    - st.session_state["default_sector"] is initialized to that analyst's
+      first allocated sector IF not already set this session
+    """
+    qp = st.query_params
+    url_val = qp.get("analyst") if hasattr(qp, "get") else None
+
+    # First-load hydration from URL
+    if "current_analyst" not in st.session_state and url_val in ANALYSTS:
+        st.session_state["current_analyst"] = url_val
+        sectors = ANALYST_SECTORS.get(url_val, [])
+        if sectors and "default_sector" not in st.session_state:
+            st.session_state["default_sector"] = sectors[0]
+
+    current = st.session_state.get("current_analyst")
+    options = ["(pick yourself)"] + ANALYSTS
+    idx = ANALYSTS.index(current) + 1 if current in ANALYSTS else 0
+
+    selected = st.sidebar.selectbox(
+        "I am",
+        options=options,
+        index=idx,
+        key="_analyst_picker",
+        help="Pick once per session. Sector dropdowns default to your allocated sectors, and the URL gets updated so a bookmark remembers you.",
+    )
+
+    if selected != "(pick yourself)":
+        prev = st.session_state.get("current_analyst")
+        if prev != selected:
+            st.session_state["current_analyst"] = selected
+            sectors = ANALYST_SECTORS.get(selected, [])
+            if sectors:
+                st.session_state["default_sector"] = sectors[0]
+            try:
+                st.query_params["analyst"] = selected
+            except Exception:
+                pass
+            st.rerun()
 
 
 def apply_branding() -> None:
-    """Inject brand CSS + render the sidebar logo block. Safe to call on every page."""
+    """Inject brand CSS + render the sidebar logo block + analyst picker."""
     st.markdown(_CSS, unsafe_allow_html=True)
     _render_logo_in_sidebar()
+    _render_analyst_picker()
