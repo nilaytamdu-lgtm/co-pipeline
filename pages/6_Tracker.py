@@ -59,6 +59,46 @@ if df.empty:
     st.info("Tab is empty (or doesn't exist yet). Use Settings → Test connection to create headers.")
     st.stop()
 
+# Keep the unfiltered data around for the backfill action — the filter section
+# below mutates `df` for display.
+df_full = df.copy()
+
+# Backfill blank Outreach Channel rows (one API call, batch update)
+if "Outreach Channel" in df_full.columns:
+    blank_mask = df_full["Outreach Channel"].fillna("").str.strip() == ""
+    n_blank_total = int(blank_mask.sum())
+    if n_blank_total > 0:
+        with st.expander(f"⚠️ {n_blank_total} rows have blank Outreach Channel — auto-categorize?", expanded=False):
+            st.caption(
+                "Rows with a populated **POC Email** get tagged as **Automation (email)**. "
+                "Rows without get tagged as **LinkedIn (manual)**. One Sheets API call total."
+            )
+            # Show preview of what will happen
+            blank_df = df_full[blank_mask]
+            n_to_auto = int(blank_df["POC Email"].astype(str).str.contains("@", na=False).sum()) if "POC Email" in blank_df.columns else 0
+            n_to_li = n_blank_total - n_to_auto
+            st.write(f"After backfill: **{n_to_auto}** → Automation, **{n_to_li}** → LinkedIn")
+
+            if st.button("Backfill now", type="primary"):
+                from core.sheets import batch_update_column
+
+                row_to_value: dict[int, str] = {}
+                for df_idx, row in blank_df.iterrows():
+                    # df_idx is 0-based; +2 for 1-based sheet row plus header row
+                    sheet_row = int(df_idx) + 2
+                    email = str(row.get("POC Email", "")).strip()
+                    new_val = CHANNEL_AUTOMATION if email and "@" in email else CHANNEL_LINKEDIN
+                    row_to_value[sheet_row] = new_val
+
+                with st.spinner(f"Updating {len(row_to_value)} cells..."):
+                    try:
+                        updated = batch_update_column(tab, "Outreach Channel", row_to_value)
+                        st.success(f"Backfilled {updated} rows. Refreshing...")
+                        _load.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Backfill failed: {e}")
+
 # Filter controls
 f1, f2 = st.columns([2, 1])
 query = f1.text_input("Search (any column, case-insensitive)")

@@ -185,6 +185,27 @@ def update_cells(tab: str, row_index: int, updates: dict) -> None:
         ws.batch_update(payload)
 
 
+def batch_update_column(tab: str, column_name: str, row_to_value: dict[int, str]) -> int:
+    """Batch-update one column across many rows in a single API call.
+
+    `row_to_value` is {1-based sheet row index: new cell value}. The header
+    row is row 1, so data rows start at 2.
+    """
+    if not row_to_value:
+        return 0
+    ws = get_worksheet(tab, create_if_missing=False)
+    headers = _retry_on_429(lambda: ws.row_values(1))
+    if column_name not in headers:
+        raise RuntimeError(f"Column '{column_name}' not found in tab '{tab}'.")
+    col_idx = headers.index(column_name) + 1
+    payload = [
+        {"range": gspread.utils.rowcol_to_a1(row_idx, col_idx), "values": [[str(value)]]}
+        for row_idx, value in row_to_value.items()
+    ]
+    _retry_on_429(lambda: ws.batch_update(payload))
+    return len(payload)
+
+
 def find_row(tab: str, column: str, value: str) -> Optional[int]:
     """Return 1-based row index for the first row where `column` == `value` (case-insensitive, trimmed)."""
     df = read_df(tab)
