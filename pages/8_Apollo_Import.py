@@ -1,23 +1,29 @@
-"""Apollo (via Instant Data Scraper) → tracker pipeline.
+"""Apollo CSV → tracker pipeline.
 
-Expects a CSV with these 8 columns (after trimming inside the extension):
+Works with both:
+- Apollo native CSV export (includes POC Email when Apollo has it)
+- Instant Data Scraper CSV (no email — Hunter/Snov fills the gap)
+
+Expected columns (any subset — auto-detected, manually overridable):
 - POC Name
-- POC Apollo        (Apollo profile URL of the person)
-- Designation
-- Company Apollo    (Apollo profile URL of the company)
+- POC Email            (Apollo native — used as-is when present)
+- Designation / Title
 - Company Name
 - POC Linkedin
+- POC Apollo URL       (Apollo profile URL of the person)
+- Company Apollo URL   (Apollo profile URL of the company)
 - Location
-- Sector
+- Sector / Industry
 
 Workflow:
 1. Upload CSV.
-2. Confirm column mapping (auto-detected, manual override available).
+2. Confirm column mapping (auto-detected).
 3. Pick a batch sector from our 15-sector list (drives analyst routing).
 4. Review + tick rows. Import to Signal Based Outreach.
-5. If Brave is configured, the app resolves each company's domain via Brave
-   and then calls Hunter to find the email. Without Brave, rows go in with
-   blank emails (you can fill them later via the Enrich page).
+5. For rows missing an email, the app resolves the domain (Brave if
+   configured, free DNS fallback otherwise) then calls Hunter → Snov
+   to find one. Rows that already have an email from Apollo skip this
+   entirely — no API credit spent.
 6. Bulk draft generation for the imported batch.
 
 Apollo URLs + Location + CSV sector are preserved in the Signal Details column
@@ -65,11 +71,13 @@ if _current_user_top and _current_user_top in RELATIONSHIP_ANALYSTS:
 # ---------- Target field definitions ----------
 # Direct fields go straight to their tracker column.
 # Context fields get composed into Signal Details with a label prefix.
+# POC Email is direct now because Apollo native exports include it.
 DIRECT_FIELDS = [
     "POC Name",
     "POC Job Title",
     "Name of Organisation",
     "POC LinkedIn",
+    "POC Email",
 ]
 CONTEXT_FIELDS = {
     # field -> label used in Signal Details
@@ -79,8 +87,9 @@ CONTEXT_FIELDS = {
     "Company Apollo URL": "Apollo Co",
 }
 OPTIONAL_FIELDS = [
-    "POC Email",
     "Organisation Website",
+    "First Name",
+    "Last Name",
 ]
 TARGET_FIELDS = DIRECT_FIELDS + list(CONTEXT_FIELDS.keys()) + OPTIONAL_FIELDS
 
@@ -92,8 +101,18 @@ def _guess_field(csv_col: str) -> str:
         if "company" in c or "co " in c or "org" in c:
             return "Company Apollo URL"
         return "POC Apollo URL"
+    # Email first — Apollo native uses just "Email" or "Personal Email"
+    if "email" in c:
+        return "POC Email"
+    # Person/Company LinkedIn URL (Apollo native split)
     if "linkedin" in c:
+        if "company" in c or "organization" in c or "organisation" in c:
+            return ""  # ignore — we don't track company LinkedIn
         return "POC LinkedIn"
+    if c in ("first name", "firstname", "given name"):
+        return "First Name"
+    if c in ("last name", "lastname", "surname", "family name"):
+        return "Last Name"
     if c in ("poc name", "name", "full name", "contact name", "person name"):
         return "POC Name"
     if c in ("designation", "title", "job title", "position") or "title" in c or "designation" in c:
@@ -108,21 +127,21 @@ def _guess_field(csv_col: str) -> str:
         if "company" in c:
             return "Organisation Website"
         return "POC LinkedIn"
-    if "email" in c:
-        return "POC Email"
     if "website" in c or c == "domain":
         return "Organisation Website"
     return ""
 
 
 # ---------- Step 1: upload ----------
-uploaded = st.file_uploader("CSV file (Instant Data Scraper export)", type=["csv"])
+uploaded = st.file_uploader("CSV file (Apollo native export or Instant Data Scraper)", type=["csv"])
 if not uploaded:
     st.info(
         "Run your search in Apollo (use filters from the **Keywords** page). "
-        "Scrape with the **Instant Data Scraper** Chrome extension. "
-        "Trim the CSV to: POC Name, POC Apollo, Designation, Company Apollo, "
-        "Company Name, POC Linkedin, Location, Sector. Drop the CSV here."
+        "Export as CSV (Apollo native gives you POC emails when it has them) "
+        "or scrape with the **Instant Data Scraper** extension. "
+        "Useful columns: POC Name (or First/Last Name), Title, Company, "
+        "Email, Person LinkedIn URL, Location, Industry, Apollo URLs. "
+        "Drop the CSV here."
     )
     st.stop()
 
@@ -187,7 +206,7 @@ for i, field in enumerate(CONTEXT_FIELDS.keys()):
     if sel != "(none)":
         mapping[field] = sel
 
-with st.expander("Also map (if your CSV has them) — Email / Website", expanded=False):
+with st.expander("Also map (if your CSV has them) — Website / split First+Last Name", expanded=False):
     ocols = st.columns(2)
     for i, field in enumerate(OPTIONAL_FIELDS):
         current = st.session_state.get(f"col_map_{field}", "(none)")
@@ -207,6 +226,13 @@ for field, csv_col in mapping.items():
 for col in TARGET_FIELDS:
     if col not in normalized.columns:
         normalized[col] = ""
+
+# If the CSV split the name into First + Last (Apollo native does this),
+# stitch them together into POC Name where POC Name itself wasn't mapped.
+if "First Name" in mapping or "Last Name" in mapping:
+    needs_combine = normalized["POC Name"].str.strip() == ""
+    combined = (normalized["First Name"].fillna("") + " " + normalized["Last Name"].fillna("")).str.strip()
+    normalized.loc[needs_combine, "POC Name"] = combined[needs_combine]
 
 clean = normalized[
     (normalized["POC Name"].str.strip() != "")
@@ -277,32 +303,50 @@ selected = edited[edited["import"] == True]
 n_selected = len(selected)
 n_with_email = int(selected["POC Email"].astype(str).str.contains("@", na=False).sum()) if "POC Email" in selected.columns else 0
 n_need_enrich = n_selected - n_with_email
-st.caption(f"{n_selected} selected · {n_with_email} already have email · {n_need_enrich} would need enrichment")
+st.caption(
+    f"{n_selected} selected · **{n_with_email} already have email** (kept as-is) · "
+    f"**{n_need_enrich} missing email** (will be enriched via Hunter → Snov if you enable below)"
+)
 
 # ---------- Step 4: import ----------
 st.divider()
 
 has_hunter = bool(secret("apis", "hunter_api_key"))
+has_snov = bool(secret("apis", "snov_user_id")) and bool(secret("apis", "snov_secret"))
 has_brave = bool(secret("apis", "brave_api_key"))
 
-if not has_hunter:
-    st.warning("Hunter not configured. Rows will import without emails.")
+providers = []
+if has_hunter:
+    providers.append("Hunter")
+if has_snov:
+    providers.append("Snov")
+
+if not providers:
+    st.warning(
+        "Neither Hunter nor Snov is configured. Rows already containing an "
+        "email will still import; rows without one will go in blank."
+    )
 else:
+    chain = " → ".join(providers)
     if has_brave:
-        st.info("Domain resolution: Brave (best) → free DNS guesser fallback.")
+        st.info(f"Enrichment chain for missing emails: {chain}. Domain resolution: Brave → free DNS guesser fallback.")
     else:
         st.info(
+            f"Enrichment chain for missing emails: {chain}. "
             "Brave not configured, so domains will be guessed via a free DNS check "
             "(catches most common Indian brand patterns like `slurrpfarm.com`). "
-            "Rows where the guess fails will import without emails — fill them in "
-            "manually via the **Enrich** page."
+            "Rows where domain resolution fails will import without emails — fill "
+            "them in manually via the **Enrich** page."
         )
 
 do_enrich = st.checkbox(
-    "Find email via Hunter for each row (resolves domain first)",
-    value=has_hunter,
-    disabled=not has_hunter,
-    help="One Hunter call per row that needs enrichment. Domain resolution is free.",
+    "Enrich rows that are missing an email (Hunter → Snov)",
+    value=bool(providers),
+    disabled=not providers,
+    help=(
+        "Only rows where the POC Email cell is empty go through enrichment. "
+        "Rows that already have an Apollo email are kept as-is and cost no API credits."
+    ),
 )
 
 
@@ -338,19 +382,23 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
     else:
         brave_find_domain = None
 
-    # Pre-build dedupe lookups. LinkedIn is the strongest key; name+company
-    # is the fallback when LinkedIn is missing on either side. One read.
+    # Pre-build dedupe lookups. LinkedIn and Email are the strongest keys;
+    # name+company is the fallback when both are missing on either side. One read.
     existing_linkedin: set = set()
+    existing_email: set = set()
     existing_name_company: set = set()
     try:
         df_existing = read_df(TAB_SIGNAL)
         if not df_existing.empty:
             for _, r in df_existing.iterrows():
                 li = str(r.get("POC LinkedIn", "")).strip().lower()
+                em = str(r.get("POC Email", "")).strip().lower()
                 p = str(r.get("POC Name", "")).strip().lower()
                 c = str(r.get("Name of Organisation", "")).strip().lower()
                 if li:
                     existing_linkedin.add(li)
+                if em:
+                    existing_email.add(em)
                 if p and c:
                     existing_name_company.add((p, c))
     except Exception as e:
@@ -368,6 +416,7 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
         poc_name = str(row.get("POC Name", "")).strip()
         company = str(row.get("Name of Organisation", "")).strip()
         poc_li = str(row.get("POC LinkedIn", "")).strip()
+        poc_email_in = str(row.get("POC Email", "")).strip()
 
         candidate = {
             "Name of Organisation": company,
@@ -376,17 +425,22 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             "POC Name": poc_name,
             "POC Job Title": str(row.get("POC Job Title", "")).strip(),
             "POC LinkedIn": poc_li,
-            "POC Email": str(row.get("POC Email", "")).strip(),
+            "POC Email": poc_email_in,
             "Signal Details": _compose_signal_details(row),
-            "Source of Signal": "Apollo (Instant Data Scraper)",
+            "Source of Signal": "Apollo",
             "180DC POC": current_user or OWNERS.get(sector, ""),
             "Date of Entry": dt.date.today().isoformat(),
         }
 
-        # Dedupe: LinkedIn first, then name+company fallback
+        # Dedupe: LinkedIn → Email → name+company fallback
         if poc_li and poc_li.lower() in existing_linkedin:
             skipped += 1
             log.caption(f"({i}/{n_selected}) skipped duplicate LinkedIn: {poc_name}")
+            progress.progress(i / n_selected)
+            continue
+        if poc_email_in and poc_email_in.lower() in existing_email:
+            skipped += 1
+            log.caption(f"({i}/{n_selected}) skipped duplicate email: {poc_name} <{poc_email_in}>")
             progress.progress(i / n_selected)
             continue
         nc_key = (poc_name.lower(), company.lower())
@@ -433,6 +487,11 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
         to_append.append(candidate)
         if poc_li:
             existing_linkedin.add(poc_li.lower())
+        # Track the email we end up with (CSV or enriched) so subsequent rows
+        # in the same batch don't duplicate it.
+        final_email = candidate.get("POC Email", "").strip().lower()
+        if final_email:
+            existing_email.add(final_email)
         existing_name_company.add(nc_key)
         log.caption(f"({i}/{n_selected}) queued {poc_name} @ {company} → {candidate['Outreach Channel']}")
         progress.progress(i / n_selected)
