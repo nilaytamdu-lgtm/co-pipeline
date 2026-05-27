@@ -37,6 +37,82 @@ st.write(
 
 st.divider()
 
+st.subheader("Enrichment provider health")
+st.caption(
+    "Check this before running a big import. If a key is expired or out of credits, "
+    "every row from the import will silently fall through to LinkedIn outreach."
+)
+if st.button("Check Hunter + Snov credits"):
+    cols = st.columns(2)
+
+    # --- Hunter ---
+    with cols[0]:
+        st.markdown("**Hunter**")
+        if not secret("apis", "hunter_api_key"):
+            st.caption("Not configured.")
+        else:
+            try:
+                from core.enrich import hunter as _hunter
+                acct = _hunter.account()
+                calls = acct.get("calls", {}) or {}
+                search = (calls.get("search", {}) or {})
+                verify_c = (calls.get("verify", {}) or {})
+                s_used, s_avail = search.get("used", 0), search.get("available", 0)
+                v_used, v_avail = verify_c.get("used", 0), verify_c.get("available", 0)
+                s_left = max(0, s_avail - s_used)
+                v_left = max(0, v_avail - v_used)
+                if s_left <= 0:
+                    st.error(f"Searches exhausted: {s_used}/{s_avail}. Resets: {acct.get('reset_date', '?')}")
+                else:
+                    st.success(f"Plan: {acct.get('plan_name', '?')}")
+                    st.write({
+                        "Searches left": f"{s_left} (of {s_avail})",
+                        "Verifications left": f"{v_left} (of {v_avail})",
+                        "Resets": acct.get("reset_date", "?"),
+                    })
+            except Exception as e:
+                # Typed errors give clean messages
+                msg = str(e)
+                if "AuthError" in type(e).__name__ or "rejected" in msg.lower() or "invalid" in msg.lower():
+                    st.error(f"Key rejected: {msg}")
+                elif "Quota" in type(e).__name__:
+                    st.error(f"Quota exhausted: {msg}")
+                else:
+                    st.warning(f"Could not reach Hunter: {msg}")
+
+    # --- Snov ---
+    with cols[1]:
+        st.markdown("**Snov**")
+        if not (secret("apis", "snov_user_id") and secret("apis", "snov_secret")):
+            st.caption("Not configured.")
+        else:
+            try:
+                from core.enrich import snov as _snov
+                bal = _snov.balance()
+                bal_val = bal.get("balance")
+                # Snov returns balance as a string in some plans
+                try:
+                    bal_num = float(bal_val) if bal_val is not None else 0.0
+                except (TypeError, ValueError):
+                    bal_num = -1.0
+                if bal_num == 0:
+                    st.error(f"Credits exhausted: balance = {bal_val}")
+                elif bal_num > 0:
+                    st.success(f"Balance: {bal_val}")
+                    st.write(bal)
+                else:
+                    st.write(bal)
+            except Exception as e:
+                msg = str(e)
+                if "AuthError" in type(e).__name__ or "rejected" in msg.lower():
+                    st.error(f"Credentials rejected: {msg}")
+                elif "Quota" in type(e).__name__:
+                    st.error(f"Credits exhausted: {msg}")
+                else:
+                    st.warning(f"Could not reach Snov: {msg}")
+
+st.divider()
+
 st.subheader("Sheets connection test")
 if st.button("Test connection + ensure tab headers"):
     try:

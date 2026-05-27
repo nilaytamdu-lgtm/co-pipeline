@@ -113,11 +113,31 @@ if mode == "Manual lookup":
 
                 with st.spinner("Searching..."):
                     result = find_email(domain, first or None, last or None, verify=do_verify)
+
+                fe = result.get("fatal_error")
+                if fe:
+                    kind = fe.get("kind", "")
+                    prov = fe.get("provider", "provider")
+                    if "Auth" in kind:
+                        st.error(
+                            f"**{prov.title()} API key was rejected.** Open Settings and rotate the key. "
+                            f"Detail: {fe.get('message')}",
+                            icon="⚠️",
+                        )
+                    elif "Quota" in kind:
+                        st.error(
+                            f"**{prov.title()} credits are exhausted.** Wait for next month or swap "
+                            f"in a different account's key. Detail: {fe.get('message')}",
+                            icon="⚠️",
+                        )
+                    else:
+                        st.error(f"**{prov.title()} failed:** {fe.get('message')}", icon="⚠️")
+
                 if result.get("email"):
                     st.success(f"**{result['email']}** · score {result.get('score')} · via `{result['source']}`")
                     st.json(result)
-                else:
-                    st.warning("No email found.")
+                elif not fe:
+                    st.warning("No email found (provider returned no match for this name+domain).")
                     if result.get("alternates"):
                         st.write("Alternates returned by domain search:")
                         st.json(result["alternates"])
@@ -190,8 +210,28 @@ else:
 
                 with st.spinner("Searching..."):
                     result = find_email(domain, first or None, last or None, verify=do_verify)
+
+                fe = result.get("fatal_error")
+                if fe:
+                    kind = fe.get("kind", "")
+                    prov = fe.get("provider", "provider")
+                    if "Auth" in kind:
+                        st.error(
+                            f"**{prov.title()} API key was rejected.** Rotate it in Settings. "
+                            f"Detail: {fe.get('message')}",
+                            icon="⚠️",
+                        )
+                    elif "Quota" in kind:
+                        st.error(
+                            f"**{prov.title()} credits are exhausted.** Detail: {fe.get('message')}",
+                            icon="⚠️",
+                        )
+                    else:
+                        st.error(f"**{prov.title()} failed:** {fe.get('message')}", icon="⚠️")
+
                 if not result.get("email"):
-                    st.warning("No email found. Try a different domain spelling.")
+                    if not fe:
+                        st.warning("No email found (provider returned no match for this name+domain).")
                 else:
                     updates = {"POC Email": result["email"]}
                     if result.get("position") and not row.get("POC Job Title"):

@@ -409,6 +409,11 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
     enriched = 0
     failures: list[str] = []
     to_append: list[dict] = []
+    # Providers that fatally died this batch (auth / quota). Once a provider
+    # lands here, every subsequent row skips it instead of burning the same
+    # 401 / 402 over and over.
+    dead_providers: set[str] = set()
+    provider_deaths: dict[str, dict] = {}  # provider -> {kind, message}
     progress = st.progress(0.0)
     log = st.empty()
 
@@ -451,7 +456,13 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             continue
 
         # Enrich if needed (external APIs, not Google Sheets)
-        if not candidate["POC Email"] and do_enrich:
+        # If every enrichment provider is already dead this batch, skip the
+        # domain lookup entirely — saves time and stops spinning.
+        all_providers_dead = (
+            ("hunter" in dead_providers or not has_hunter)
+            and ("snov" in dead_providers or not has_snov)
+        )
+        if not candidate["POC Email"] and do_enrich and not all_providers_dead:
             domain = _extract_domain(candidate["Organisation Website"])
             if not domain and brave_find_domain is not None:
                 try:
@@ -469,14 +480,37 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
                 first = parts[0] if parts else ""
                 last = parts[1] if len(parts) > 1 else ""
                 try:
-                    result = find_email(domain, first or None, last or None)
-                    if result.get("email"):
-                        candidate["POC Email"] = result["email"]
-                        if result.get("position") and not candidate["POC Job Title"]:
-                            candidate["POC Job Title"] = result["position"]
-                        enriched += 1
+                    result = find_email(
+                        domain,
+                        first or None,
+                        last or None,
+                        skip_providers=dead_providers,
+                    )
                 except Exception as e:
-                    failures.append(f"{poc_name}: Hunter failed ({e})")
+                    # Should be rare — find_email handles its own provider errors
+                    failures.append(f"{poc_name}: enrichment crashed ({e})")
+                    result = {}
+
+                # Mark any provider that just fatally died (auth / quota)
+                fe = result.get("fatal_error") if isinstance(result, dict) else None
+                if fe:
+                    prov = fe.get("provider")
+                    if prov and prov not in dead_providers:
+                        dead_providers.add(prov)
+                        provider_deaths[prov] = {
+                            "kind": fe.get("kind"),
+                            "message": fe.get("message"),
+                        }
+                        failures.append(
+                            f"PROVIDER DOWN: {prov} ({fe.get('kind')}) — {fe.get('message')}. "
+                            f"Skipping {prov} for the rest of this batch."
+                        )
+
+                if result.get("email"):
+                    candidate["POC Email"] = result["email"]
+                    if result.get("position") and not candidate["POC Job Title"]:
+                        candidate["POC Job Title"] = result["position"]
+                    enriched += 1
 
         # Decide outreach channel based on final email state.
         # Email present (from CSV or enriched) → Automation. Otherwise LinkedIn.
@@ -508,12 +542,42 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
     n_automation = sum(1 for r in to_append[:added] if r.get("Outreach Channel") == CHANNEL_AUTOMATION)
     n_linkedin = sum(1 for r in to_append[:added] if r.get("Outreach Channel") == CHANNEL_LINKEDIN)
 
+    # Show the provider-death banner FIRST — it explains why so many rows
+    # might have landed in LinkedIn outreach instead of being enriched.
+    if provider_deaths:
+        for prov, info in provider_deaths.items():
+            kind = info.get("kind", "")
+            message = info.get("message", "")
+            if "Auth" in kind:
+                title = f"{prov.title()} API key was rejected"
+                advice = (
+                    f"Your **{prov} key looks invalid or revoked**. "
+                    f"Open Settings, regenerate the key on {prov}.io, and paste it into "
+                    f"`.streamlit/secrets.toml` (or the Streamlit Cloud secrets manager). "
+                    f"Until that's fixed, every row will route to LinkedIn outreach."
+                )
+            elif "Quota" in kind:
+                title = f"{prov.title()} credits are exhausted"
+                advice = (
+                    f"Your **{prov} monthly quota is gone**. Either wait for the next "
+                    f"reset, swap in a different account's key, or upgrade the plan. "
+                    f"Until that's fixed, every row will route to LinkedIn outreach. "
+                    f"See the workarounds section on the **Settings** page."
+                )
+            elif "Rate" in kind:
+                title = f"{prov.title()} rate-limited"
+                advice = f"{prov} returned 429. Wait a minute and re-run the import."
+            else:
+                title = f"{prov.title()} failed"
+                advice = f"Provider error: {message}"
+            st.error(f"**{title}.** {advice}", icon="⚠️")
+
     st.success(
         f"Added **{added}** rows · enriched **{enriched}** emails · skipped **{skipped}** duplicates\n\n"
         f"→ **{n_automation}** ready for email automation · **{n_linkedin}** for LinkedIn outreach"
     )
     if failures:
-        with st.expander(f"{len(failures)} failures / warnings"):
+        with st.expander(f"{len(failures)} failures / warnings", expanded=bool(provider_deaths)):
             for f in failures:
                 st.text(f)
 
