@@ -28,9 +28,10 @@ st.write(
         "Sheet ID configured": bool(sheet_id()),
         "Service account configured": bool(secret("google_service_account", "client_email")),
         "Hunter configured": bool(secret("apis", "hunter_api_key")),
-        "Brave configured": bool(secret("apis", "brave_api_key")),
         "Snov configured": bool(secret("apis", "snov_user_id")) and bool(secret("apis", "snov_secret")),
         "Skrapp configured": bool(secret("apis", "skrapp_api_key")),
+        "GetProspect configured": bool(secret("apis", "getprospect_api_key")),
+        "Brave configured": bool(secret("apis", "brave_api_key")),
         "Apollo configured": bool(secret("apis", "apollo_api_key")),
     }
 )
@@ -42,12 +43,42 @@ st.caption(
     "Check this before running a big import. If a key is expired or out of credits, "
     "every row from the import will silently fall through to LinkedIn outreach."
 )
-if st.button("Check Hunter + Snov credits"):
-    cols = st.columns(2)
+
+
+def _classify_err(e: Exception) -> str:
+    """Bucket an exception into auth / quota / network for friendly display."""
+    name = type(e).__name__
+    msg = str(e).lower()
+    if "AuthError" in name or "rejected" in msg or "unauthorized" in msg:
+        return "auth"
+    if "QuotaExhaustedError" in name or "quota" in msg or "credit" in msg or "limit" in msg:
+        return "quota"
+    if "RateLimitError" in name:
+        return "rate"
+    return "network"
+
+
+def _show_err(provider: str, e: Exception, fix_hint: str = "") -> None:
+    bucket = _classify_err(e)
+    msg = str(e)
+    if bucket == "auth":
+        st.error(f"**{provider} key rejected.** {msg}")
+        if fix_hint:
+            st.caption(fix_hint)
+    elif bucket == "quota":
+        st.error(f"**{provider} credits exhausted.** {msg}")
+    elif bucket == "rate":
+        st.warning(f"**{provider} rate-limited.** {msg}")
+    else:
+        st.warning(f"Could not reach {provider}: {msg}")
+
+
+if st.button("Check all enrichment provider credits"):
+    grid = st.columns(2)
 
     # --- Hunter ---
-    with cols[0]:
-        st.markdown("**Hunter**")
+    with grid[0]:
+        st.markdown("**Hunter** (free 25/mo)")
         if not secret("apis", "hunter_api_key"):
             st.caption("Not configured.")
         else:
@@ -71,18 +102,14 @@ if st.button("Check Hunter + Snov credits"):
                         "Resets": acct.get("reset_date", "?"),
                     })
             except Exception as e:
-                # Typed errors give clean messages
-                msg = str(e)
-                if "AuthError" in type(e).__name__ or "rejected" in msg.lower() or "invalid" in msg.lower():
-                    st.error(f"Key rejected: {msg}")
-                elif "Quota" in type(e).__name__:
-                    st.error(f"Quota exhausted: {msg}")
-                else:
-                    st.warning(f"Could not reach Hunter: {msg}")
+                _show_err(
+                    "Hunter", e,
+                    "Rotate at hunter.io/api-keys, then paste the new key into Streamlit Cloud secrets.",
+                )
 
     # --- Snov ---
-    with cols[1]:
-        st.markdown("**Snov**")
+    with grid[1]:
+        st.markdown("**Snov** (free 50/mo)")
         if not (secret("apis", "snov_user_id") and secret("apis", "snov_secret")):
             st.caption("Not configured.")
         else:
@@ -90,7 +117,6 @@ if st.button("Check Hunter + Snov credits"):
                 from core.enrich import snov as _snov
                 bal = _snov.balance()
                 bal_val = bal.get("balance")
-                # Snov returns balance as a string in some plans
                 try:
                     bal_num = float(bal_val) if bal_val is not None else 0.0
                 except (TypeError, ValueError):
@@ -103,13 +129,51 @@ if st.button("Check Hunter + Snov credits"):
                 else:
                     st.write(bal)
             except Exception as e:
-                msg = str(e)
-                if "AuthError" in type(e).__name__ or "rejected" in msg.lower():
-                    st.error(f"Credentials rejected: {msg}")
-                elif "Quota" in type(e).__name__:
-                    st.error(f"Credits exhausted: {msg}")
-                else:
-                    st.warning(f"Could not reach Snov: {msg}")
+                _show_err(
+                    "Snov", e,
+                    "Snov 403 usually means API access isn't toggled on. "
+                    "Go to snov.io → Settings → API → click 'Activate API access'. "
+                    "Then regenerate the secret and paste both User ID + Secret fresh into "
+                    "Streamlit Cloud secrets.",
+                )
+
+    grid2 = st.columns(2)
+
+    # --- Skrapp ---
+    with grid2[0]:
+        st.markdown("**Skrapp** (free 150/mo)")
+        if not secret("apis", "skrapp_api_key"):
+            st.caption("Not configured.")
+        else:
+            try:
+                from core.enrich import skrapp as _skrapp
+                acct = _skrapp.account()
+                st.success("Reachable")
+                st.write(acct)
+            except Exception as e:
+                _show_err(
+                    "Skrapp", e,
+                    "Rotate at skrapp.io/profile/api, paste new key into "
+                    "`apis.skrapp_api_key` in Streamlit Cloud secrets.",
+                )
+
+    # --- GetProspect ---
+    with grid2[1]:
+        st.markdown("**GetProspect** (free 100/mo)")
+        if not secret("apis", "getprospect_api_key"):
+            st.caption("Not configured.")
+        else:
+            try:
+                from core.enrich import getprospect as _getprospect
+                acct = _getprospect.account()
+                st.success("Reachable")
+                st.write(acct)
+            except Exception as e:
+                _show_err(
+                    "GetProspect", e,
+                    "Rotate at app.getprospect.com/settings/api, paste new key into "
+                    "`apis.getprospect_api_key` in Streamlit Cloud secrets.",
+                )
 
 st.divider()
 

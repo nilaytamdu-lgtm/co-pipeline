@@ -1,22 +1,29 @@
 """Orchestrates email discovery across providers.
 
-Order of operations:
-1. If domain + first/last name -> Hunter Email Finder -> fall back to Snov Email Finder.
-2. Else if domain only -> Hunter Domain Search -> fall back to Snov Domain Search,
-   then pick the best POC by the org's hierarchy (Founder -> Ops/Growth -> Product -> TA).
-3. Verify the chosen email if `verify=True`.
+Provider chain for the named-finder path (when first + last + domain known):
+1. Hunter (25 free/mo)
+2. Snov (50 free/mo)
+3. Skrapp (150 free/mo)
+4. GetProspect (100 free/mo)
 
-Caller can pass `skip_providers={"hunter", "snov"}` to disable providers
-that already died in this batch (auth/quota). The returned dict carries a
-`fatal_error` field whenever a provider just died — the caller should add
-that provider to its skip-set so we don't keep hammering a dead key.
+Total free capacity per analyst account: 325 finder credits/mo. If five team
+analysts each sign up, that's 1,625/mo before anyone pays.
+
+Domain-search fallback (no name known): Hunter + Snov only — Skrapp and
+GetProspect's domain search endpoints aren't worth the complexity for our
+use case.
+
+Caller passes `skip_providers={"hunter", "snov"}` to disable providers that
+already died in this batch (auth / quota). The returned dict has a
+`fatal_error` field whenever a provider just fatally died — caller should
+add that provider to its skip-set so we don't keep hammering a dead key.
 """
 from __future__ import annotations
 
 from typing import Iterable, Optional
 
 from core.config import secret
-from core.enrich import hunter, snov
+from core.enrich import getprospect, hunter, skrapp, snov
 from core.enrich.errors import (
     AuthError,
     EnrichmentError,
@@ -48,18 +55,66 @@ def pick_best_poc(candidates: list[dict]) -> Optional[dict]:
     return scored[0]
 
 
+def _has_hunter() -> bool:
+    return bool(secret("apis", "hunter_api_key"))
+
+
 def _has_snov() -> bool:
     return bool(secret("apis", "snov_user_id")) and bool(secret("apis", "snov_secret"))
 
 
-def _has_hunter() -> bool:
-    return bool(secret("apis", "hunter_api_key"))
+def _has_skrapp() -> bool:
+    return bool(secret("apis", "skrapp_api_key"))
+
+
+def _has_getprospect() -> bool:
+    return bool(secret("apis", "getprospect_api_key"))
 
 
 def _is_fatal(e: Exception) -> bool:
     """Auth + quota errors mean the provider is dead for the rest of the batch.
     Rate limits and network blips are NOT fatal — retry next row."""
     return isinstance(e, (AuthError, QuotaExhaustedError))
+
+
+def _try_named_finder(
+    provider_name: str,
+    has_fn,
+    finder_fn,
+    domain: str,
+    first_name: str,
+    last_name: str,
+    skip: set,
+    errors: list,
+    fatal_holder: list,
+):
+    """Call a single named-email-finder provider, handling errors uniformly.
+
+    Returns the result dict (with 'email' possibly set) or None if the
+    provider was skipped / errored. Mutates `skip`, `errors`, `fatal_holder`.
+    """
+    if provider_name in skip or not has_fn():
+        return None
+    try:
+        hit = finder_fn(domain, first_name, last_name)
+        if hit.get("email"):
+            return hit
+    except EnrichmentError as e:
+        if _is_fatal(e):
+            if not fatal_holder:
+                fatal_holder.append({
+                    "provider": provider_name,
+                    "kind": type(e).__name__,
+                    "message": str(e),
+                })
+            skip.add(provider_name)
+        else:
+            errors.append({
+                "provider": provider_name,
+                "kind": type(e).__name__,
+                "message": str(e),
+            })
+    return None
 
 
 def find_email(
@@ -71,70 +126,60 @@ def find_email(
 ) -> dict:
     """Try named-finder providers first (1 credit each), then broad domain search.
 
-    Returns a dict that always has `email` (str or None). When a provider
-    fatally fails (auth or quota), `fatal_error` is set to
-    `{provider, kind, message}` so the caller can mark that provider as
-    dead for the remainder of the batch.
-
-    `errors` lists non-fatal hiccups (rate-limit, network) — informational only.
+    Returns a dict with `email` (str or None). When a provider fatally
+    fails (auth or quota), `fatal_error` is set to
+    `{provider, kind, message}` so caller marks the provider as dead.
+    `errors` lists non-fatal hiccups (rate-limit, network) — informational.
     """
     skip = set(skip_providers or ())
     errors: list[dict] = []
-    fatal_error: Optional[dict] = None
+    fatal_holder: list[dict] = []  # one-element list used as mutable cell
 
-    # Named-finder chain (cheapest path)
+    # ----- Named-finder chain (cheapest path) -----
     if first_name and last_name:
-        if _has_hunter() and "hunter" not in skip:
-            try:
-                hit = hunter.email_finder(domain, first_name, last_name)
-                if hit.get("email"):
-                    return {
-                        "email": hit["email"],
-                        "score": hit.get("score"),
-                        "position": hit.get("position"),
-                        "linkedin": hit.get("linkedin"),
-                        "source": "hunter:email_finder",
-                        "verification": hunter.verify(hit["email"]) if verify else None,
-                        "errors": errors,
-                    }
-            except EnrichmentError as e:
-                if _is_fatal(e):
-                    fatal_error = {"provider": "hunter", "kind": type(e).__name__, "message": str(e)}
-                    skip = skip | {"hunter"}
-                else:
-                    errors.append({"provider": "hunter", "kind": type(e).__name__, "message": str(e)})
+        chain = [
+            ("hunter", _has_hunter, hunter.email_finder),
+            ("snov", _has_snov, snov.email_finder),
+            ("skrapp", _has_skrapp, skrapp.email_finder),
+            ("getprospect", _has_getprospect, getprospect.email_finder),
+        ]
+        for provider_name, has_fn, finder_fn in chain:
+            hit = _try_named_finder(
+                provider_name, has_fn, finder_fn, domain, first_name, last_name,
+                skip, errors, fatal_holder,
+            )
+            if hit:
+                # Choose a verifier that's still alive (Hunter preferred, falls back to Snov)
+                verification = None
+                if verify:
+                    try:
+                        if _has_hunter() and "hunter" not in skip:
+                            verification = hunter.verify(hit["email"])
+                        elif _has_snov() and "snov" not in skip:
+                            verification = snov.verify(hit["email"])
+                    except EnrichmentError:
+                        verification = None
+                return {
+                    "email": hit["email"],
+                    "score": hit.get("score"),
+                    "position": hit.get("position"),
+                    "linkedin": hit.get("linkedin"),
+                    "source": f"{provider_name}:email_finder",
+                    "verification": verification,
+                    "errors": errors,
+                    "fatal_error": fatal_holder[0] if fatal_holder else None,
+                }
 
-        if _has_snov() and "snov" not in skip:
-            try:
-                hit = snov.email_finder(domain, first_name, last_name)
-                if hit.get("email"):
-                    return {
-                        "email": hit["email"],
-                        "score": hit.get("score"),
-                        "position": None,
-                        "linkedin": None,
-                        "source": "snov:email_finder",
-                        "verification": snov.verify(hit["email"]) if verify else None,
-                        "errors": errors,
-                        "fatal_error": fatal_error,
-                    }
-            except EnrichmentError as e:
-                if _is_fatal(e):
-                    snov_fatal = {"provider": "snov", "kind": type(e).__name__, "message": str(e)}
-                    fatal_error = fatal_error or snov_fatal
-                    skip = skip | {"snov"}
-                else:
-                    errors.append({"provider": "snov", "kind": type(e).__name__, "message": str(e)})
-
-    # Broad domain-search chain (expensive — only if no email yet)
+    # ----- Broad domain-search fallback (Hunter + Snov only) -----
     candidates: list[dict] = []
     if _has_hunter() and "hunter" not in skip:
         try:
             candidates.extend(hunter.domain_search(domain, limit=10))
         except EnrichmentError as e:
             if _is_fatal(e):
-                fatal_error = fatal_error or {"provider": "hunter", "kind": type(e).__name__, "message": str(e)}
-                skip = skip | {"hunter"}
+                if not fatal_holder:
+                    fatal_holder.append({"provider": "hunter", "kind": type(e).__name__, "message": str(e)})
+                skip.add("hunter")
             else:
                 errors.append({"provider": "hunter", "kind": type(e).__name__, "message": str(e)})
     if not candidates and _has_snov() and "snov" not in skip:
@@ -142,8 +187,9 @@ def find_email(
             candidates.extend(snov.domain_search(domain, limit=10))
         except EnrichmentError as e:
             if _is_fatal(e):
-                fatal_error = fatal_error or {"provider": "snov", "kind": type(e).__name__, "message": str(e)}
-                skip = skip | {"snov"}
+                if not fatal_holder:
+                    fatal_holder.append({"provider": "snov", "kind": type(e).__name__, "message": str(e)})
+                skip.add("snov")
             else:
                 errors.append({"provider": "snov", "kind": type(e).__name__, "message": str(e)})
 
@@ -158,7 +204,13 @@ def find_email(
             "verification": (hunter.verify(best["email"]) if _has_hunter() and verify else None),
             "alternates": [c for c in candidates if c is not best][:3],
             "errors": errors,
-            "fatal_error": fatal_error,
+            "fatal_error": fatal_holder[0] if fatal_holder else None,
         }
 
-    return {"email": None, "source": "no_match", "alternates": [], "errors": errors, "fatal_error": fatal_error}
+    return {
+        "email": None,
+        "source": "no_match",
+        "alternates": [],
+        "errors": errors,
+        "fatal_error": fatal_holder[0] if fatal_holder else None,
+    }

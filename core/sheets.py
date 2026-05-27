@@ -19,7 +19,7 @@ import pandas as pd
 import streamlit as st
 from google.oauth2.service_account import Credentials
 
-from core.config import OWNERS, sheet_id
+from core.config import sheet_id
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -128,12 +128,19 @@ def next_sr_no(tab: str) -> int:
 
 
 def _autofill(row: dict, sector: Optional[str] = None) -> dict:
+    """Fill in fields the caller didn't bother to provide.
+
+    NOTE: we no longer auto-set '180DC POC' from OWNERS[sector]. The old
+    behaviour silently tagged rows to whichever analyst owned the sector
+    even when the actual logged-in user was someone else, which is how
+    every batch ended up under Swaroop / SaaS. Callers now must pass
+    '180DC POC' explicitly (the logged-in user).
+    """
     out = dict(row)
     out.setdefault("Date of Entry", _dt.date.today().isoformat())
     if sector:
         out.setdefault("Organisation Sector", sector)
         out.setdefault("Sector", sector)
-        out.setdefault("180DC POC", OWNERS.get(sector, ""))
     return out
 
 

@@ -133,30 +133,54 @@ def _guess_field(csv_col: str) -> str:
 
 
 # ---------- Step 1: upload ----------
-uploaded = st.file_uploader("CSV file (Apollo native export or Instant Data Scraper)", type=["csv"])
-if not uploaded:
+uploaded_files = st.file_uploader(
+    "CSV file(s) — drop one or many at the same time",
+    type=["csv"],
+    accept_multiple_files=True,
+    help=(
+        "You can drop multiple Apollo CSVs in one go (e.g. 5 narrow searches at "
+        "25 rows each = 125 leads imported as one batch). The importer dedupes "
+        "across all of them by LinkedIn, email, and name+company."
+    ),
+)
+if not uploaded_files:
     st.info(
         "Run your search in Apollo (use filters from the **Keywords** page). "
         "Export as CSV (Apollo native gives you POC emails when it has them) "
         "or scrape with the **Instant Data Scraper** extension. "
         "Useful columns: POC Name (or First/Last Name), Title, Company, "
-        "Email, Person LinkedIn URL, Location, Industry, Apollo URLs. "
-        "Drop the CSV here."
+        "POC Email, Person LinkedIn URL, Location, Industry, Apollo URLs. "
+        "Drop one or many CSVs here."
     )
     st.stop()
 
-try:
-    df_raw = pd.read_csv(uploaded)
-except Exception as e:
-    st.error(f"Couldn't parse CSV: {e}")
+# Parse + concat all uploaded files. Track which file each row came from so
+# we can show a per-file breakdown after the import for debugging.
+parsed: list[tuple[str, pd.DataFrame]] = []
+for f in uploaded_files:
+    try:
+        df_i = pd.read_csv(f)
+        if df_i.empty:
+            st.warning(f"{f.name}: 0 rows, skipped.")
+            continue
+        df_i["__source_file"] = f.name
+        parsed.append((f.name, df_i))
+    except Exception as e:
+        st.warning(f"Couldn't parse {f.name}: {e}")
+
+if not parsed:
+    st.error("Every uploaded CSV failed to parse. Check the files and try again.")
     st.stop()
 
-if df_raw.empty:
-    st.warning("CSV has 0 rows.")
-    st.stop()
+df_raw = pd.concat([p[1] for p in parsed], ignore_index=True, sort=False)
 
-csv_cols = list(df_raw.columns)
-st.success(f"Loaded {len(df_raw)} rows, {len(csv_cols)} columns.")
+csv_cols = [c for c in df_raw.columns if c != "__source_file"]
+
+if len(parsed) > 1:
+    breakdown = " · ".join(f"`{name}`: {len(df_i)}" for name, df_i in parsed)
+    st.success(f"Loaded **{len(df_raw)}** rows across **{len(parsed)}** files. {breakdown}")
+else:
+    st.success(f"Loaded {len(df_raw)} rows, {len(csv_cols)} columns.")
 
 with st.expander("Show the raw CSV columns", expanded=False):
     st.write(csv_cols)
@@ -166,7 +190,7 @@ st.divider()
 st.subheader("Map columns")
 st.caption("Auto-detected where possible. Override anything wrong, or set to (none) to skip a field.")
 
-fingerprint = f"{uploaded.name}::{','.join(csv_cols)}"
+fingerprint = f"{'+'.join(name for name, _ in parsed)}::{','.join(csv_cols)}"
 if st.session_state.get("apollo_csv_fingerprint") != fingerprint:
     st.session_state["apollo_csv_fingerprint"] = fingerprint
     auto = {f: "" for f in TARGET_FIELDS}
@@ -253,34 +277,46 @@ st.divider()
 st.subheader("Batch sector")
 st.caption("Drives analyst routing. The CSV's specific sector value is preserved separately in Signal Details.")
 
-default_sector = st.session_state.get("default_sector", SECTORS[0])
 current_user = st.session_state.get("current_user")
-suggested_owner = OWNERS.get(default_sector, "")
+default_sector = st.session_state.get("default_sector", SECTORS[0])
+
+# Sector selectbox gets an explicit key so its widget state survives reruns
+# triggered by the Import button. Without the key, Streamlit's auto-key was
+# resetting the selection to `default_sector` (= SECTORS[0] = "SaaS") on the
+# rerun that fires when you click Import — which is why every batch was
+# getting tagged "SaaS" no matter what you picked. Live-reading from
+# session_state via the key removes that whole footgun.
+SECTOR_KEY = "apollo_batch_sector"
+if SECTOR_KEY not in st.session_state:
+    st.session_state[SECTOR_KEY] = default_sector if default_sector in SECTORS else SECTORS[0]
 
 scol1, scol2 = st.columns([3, 2])
 sector = scol1.selectbox(
     "Sector",
     SECTORS,
-    index=SECTORS.index(default_sector) if default_sector in SECTORS else 0,
+    key=SECTOR_KEY,
     label_visibility="collapsed",
 )
 suggested = OWNERS.get(sector, "")
 
-scol2.markdown(f"**180DC POC:** :green[{current_user or '—'}]")
+scol2.markdown(f"**180DC POC:** :green[{current_user or '— (not picked)'}]")
 
+# HARD BLOCK: no current_user means no import. The old code silently fell
+# back to OWNERS[sector] which is why rows kept landing under Swaroop /
+# SaaS even when a different sector was selected.
 if not current_user:
-    st.warning("Pick yourself in the **I am** dropdown at the top of the sidebar first. Imported rows get tagged with whoever's logged in.")
-else:
-    msg = f"Rows will be tagged with sector **{sector}** and 180DC POC **{current_user}**."
-    if suggested and suggested != current_user and current_user in ANALYST_SECTORS:
-        # Only show the cross-allocation hint for Analysts who have an allocation
-        my_sectors = ", ".join(ANALYST_SECTORS.get(current_user, []))
-        msg += (
-            f" Heads up: sector **{sector}** is normally **{suggested}**'s allocation. "
-            f"You're tagged as the 180DC POC regardless, but if this is a mistake, "
-            f"your sectors are: {my_sectors}."
+    st.error(
+        "**Pick yourself in the 'I am' dropdown at the top of the sidebar before importing.** "
+        "Without it, rows have no analyst to tag, and the Import button below is disabled."
+    )
+elif current_user in ANALYST_SECTORS:
+    # Only show the cross-allocation hint for Analysts who have an allocation
+    my_sectors = ", ".join(ANALYST_SECTORS.get(current_user, []))
+    if suggested and suggested != current_user:
+        st.caption(
+            f"Heads up: sector **{sector}** is normally **{suggested}**'s allocation. "
+            f"You're tagged as the 180DC POC regardless. Your sectors: {my_sectors}."
         )
-    st.caption(msg)
 
 st.subheader("Review and select")
 preview_cols = ["POC Name", "POC Job Title", "Name of Organisation", "POC LinkedIn", "Location", "CSV Sector"]
@@ -313,6 +349,8 @@ st.divider()
 
 has_hunter = bool(secret("apis", "hunter_api_key"))
 has_snov = bool(secret("apis", "snov_user_id")) and bool(secret("apis", "snov_secret"))
+has_skrapp = bool(secret("apis", "skrapp_api_key"))
+has_getprospect = bool(secret("apis", "getprospect_api_key"))
 has_brave = bool(secret("apis", "brave_api_key"))
 
 providers = []
@@ -320,10 +358,14 @@ if has_hunter:
     providers.append("Hunter")
 if has_snov:
     providers.append("Snov")
+if has_skrapp:
+    providers.append("Skrapp")
+if has_getprospect:
+    providers.append("GetProspect")
 
 if not providers:
     st.warning(
-        "Neither Hunter nor Snov is configured. Rows already containing an "
+        "No enrichment providers configured. Rows already containing an "
         "email will still import; rows without one will go in blank."
     )
 else:
@@ -340,13 +382,38 @@ else:
         )
 
 do_enrich = st.checkbox(
-    "Enrich rows that are missing an email (Hunter → Snov)",
+    f"Enrich rows that are missing an email ({' → '.join(providers) if providers else 'no providers'})",
     value=bool(providers),
     disabled=not providers,
     help=(
         "Only rows where the POC Email cell is empty go through enrichment. "
-        "Rows that already have an Apollo email are kept as-is and cost no API credits."
+        "Rows that already have an Apollo email are kept as-is and cost no API credits. "
+        "If one provider dies (401/402), the chain falls through to the next one automatically."
     ),
+)
+
+# Giant preview banner — last chance to spot a wrong analyst / wrong sector
+# before the rows hit the Sheet. If this looks wrong, you caught it before
+# 30 rows ended up tagged to the wrong person.
+st.markdown(
+    f"""
+<div style="background:#f5f8f7; border-left:4px solid #134f5c; padding:14px 18px; border-radius:8px; margin:12px 0;">
+  <div style="font-family:'Lexend',sans-serif; font-size:0.78rem; font-weight:600; color:#38761d; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:6px;">
+    About to write to the Sheet
+  </div>
+  <div style="font-family:'Lexend',sans-serif; font-size:1.05rem; color:#000;">
+    180DC POC <span style="font-weight:700; color:#134f5c;">{current_user or '—'}</span>
+    &nbsp;·&nbsp;
+    Sector <span style="font-weight:700; color:#134f5c;">{sector}</span>
+    &nbsp;·&nbsp;
+    Selected rows <span style="font-weight:700; color:#134f5c;">{n_selected}</span>
+  </div>
+  <div style="font-family:'Lexend',sans-serif; font-size:0.78rem; color:#38761d; margin-top:4px;">
+    Wrong? Fix the sidebar picker or the sector dropdown above. Don't click Import until this matches what you want.
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
 
@@ -366,12 +433,25 @@ def _compose_signal_details(row: pd.Series) -> str:
     return " | ".join(parts)
 
 
-if st.button("Import selected to Signal Based Outreach", type="primary"):
+import_disabled = not current_user
+if st.button(
+    "Import selected to Signal Based Outreach",
+    type="primary",
+    disabled=import_disabled,
+    help="Disabled until you pick yourself in the sidebar." if import_disabled else None,
+):
     if not sheet_id():
         st.error("Sheet not configured. Open Settings.")
         st.stop()
     if selected.empty:
         st.warning("Nothing selected.")
+        st.stop()
+    # Last-line-of-defense: refuse if either critical value is unset.
+    if not current_user:
+        st.error("Pick yourself in the 'I am' sidebar dropdown first.")
+        st.stop()
+    if not sector or sector not in SECTORS:
+        st.error("Pick a sector first.")
         st.stop()
 
     from core.sheets import append_rows, read_df
@@ -433,7 +513,10 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
             "POC Email": poc_email_in,
             "Signal Details": _compose_signal_details(row),
             "Source of Signal": "Apollo",
-            "180DC POC": current_user or OWNERS.get(sector, ""),
+            # Strictly the logged-in user. NO OWNERS[sector] fallback — that's
+            # what was silently tagging every row to Swaroop when current_user
+            # was somehow None and the sector dropdown defaulted to SaaS.
+            "180DC POC": current_user,
             "Date of Entry": dt.date.today().isoformat(),
         }
 
@@ -461,6 +544,8 @@ if st.button("Import selected to Signal Based Outreach", type="primary"):
         all_providers_dead = (
             ("hunter" in dead_providers or not has_hunter)
             and ("snov" in dead_providers or not has_snov)
+            and ("skrapp" in dead_providers or not has_skrapp)
+            and ("getprospect" in dead_providers or not has_getprospect)
         )
         if not candidate["POC Email"] and do_enrich and not all_providers_dead:
             domain = _extract_domain(candidate["Organisation Website"])

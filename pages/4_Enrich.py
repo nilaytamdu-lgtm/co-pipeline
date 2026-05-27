@@ -16,12 +16,23 @@ apply_branding()
 st.title("Enrich Leads")
 st.caption("Find POCs and emails — Hunter chain (Snov/Skrapp/Dropcontact slot in when keys arrive)")
 
-if not secret("apis", "hunter_api_key"):
-    st.error("Hunter API key missing. Add `apis.hunter_api_key` to secrets.toml.")
+_any_finder = (
+    bool(secret("apis", "hunter_api_key"))
+    or (bool(secret("apis", "snov_user_id")) and bool(secret("apis", "snov_secret")))
+    or bool(secret("apis", "skrapp_api_key"))
+    or bool(secret("apis", "getprospect_api_key"))
+)
+if not _any_finder:
+    st.error(
+        "No email-finder providers configured. Add at least one of: "
+        "`apis.hunter_api_key`, `apis.snov_user_id` + `apis.snov_secret`, "
+        "`apis.skrapp_api_key`, `apis.getprospect_api_key` to secrets.toml."
+    )
     st.stop()
 
 # Quota panel (free, doesn't consume credits)
 with st.expander("Provider quota", expanded=False):
+    # Hunter
     try:
         from core.enrich import hunter
 
@@ -39,6 +50,7 @@ with st.expander("Provider quota", expanded=False):
     except Exception as e:
         st.warning(f"Hunter quota fetch failed: {e}")
 
+    # Snov
     if secret("apis", "snov_user_id") and secret("apis", "snov_secret"):
         try:
             from core.enrich import snov
@@ -48,7 +60,29 @@ with st.expander("Provider quota", expanded=False):
         except Exception as e:
             st.warning(f"Snov quota fetch failed: {e}")
     else:
-        st.caption("Snov not configured — add `apis.snov_user_id` and `apis.snov_secret` to double the monthly capacity.")
+        st.caption("Snov not configured.")
+
+    # Skrapp
+    if secret("apis", "skrapp_api_key"):
+        try:
+            from core.enrich import skrapp
+
+            st.write({"Skrapp account": skrapp.account()})
+        except Exception as e:
+            st.warning(f"Skrapp quota fetch failed: {e}")
+    else:
+        st.caption("Skrapp not configured (free 150/mo at skrapp.io/api).")
+
+    # GetProspect
+    if secret("apis", "getprospect_api_key"):
+        try:
+            from core.enrich import getprospect
+
+            st.write({"GetProspect account": getprospect.account()})
+        except Exception as e:
+            st.warning(f"GetProspect quota fetch failed: {e}")
+    else:
+        st.caption("GetProspect not configured (free 100/mo at getprospect.com).")
 
 st.divider()
 
