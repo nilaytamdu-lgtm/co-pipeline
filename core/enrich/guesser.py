@@ -31,6 +31,37 @@ def _clean_domain(domain: str) -> str:
     return d
 
 
+# Business-suffix words to strip when deriving a domain slug from a company name
+_BIZ_SUFFIXES = {
+    "pvt", "private", "ltd", "limited", "llp", "inc", "incorporated",
+    "corp", "corporation", "co", "company", "group", "industries",
+    "enterprises", "ventures", "holdings", "international", "global",
+    "technologies", "technology", "tech", "solutions", "services",
+    "systems", "labs", "studio", "studios", "the", "and", "&",
+}
+
+
+def derive_domain_from_name(company: str, tld: str = "com") -> str:
+    """Last-resort: build a plausible domain from a company name without DNS check.
+
+    For 'Slurrp Farm Pvt Ltd' returns 'slurrpfarm.com'. For 'Sleepy Owl Coffee'
+    returns 'sleepyowlcoffee.com'. We strip business suffixes and join the
+    remaining words, lowercase.
+
+    These are guesses. Will sometimes be wrong. Use only when DNS resolution
+    has already failed and you need *something*.
+    """
+    if not company:
+        return ""
+    # Replace punctuation with spaces
+    cleaned = "".join(c if c.isalnum() or c.isspace() else " " for c in company.lower())
+    tokens = [t for t in cleaned.split() if t and t not in _BIZ_SUFFIXES]
+    if not tokens:
+        return ""
+    slug = "".join(tokens)
+    return f"{slug}.{tld}"
+
+
 def _slugify_name(name: Optional[str]) -> str:
     """Strip non-alphanumeric chars + lowercase. Handles names like
     'Meghana N.', 'A.K. Reddy', "O'Connor"."""

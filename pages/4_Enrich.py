@@ -346,13 +346,22 @@ if target_rows.empty:
 else:
     st.caption(f"Will run backfill on **{len(target_rows)}** rows.")
 
+    aggressive_guess = st.checkbox(
+        "Aggressive mode — derive a domain from the company name when DNS can't resolve one",
+        value=True,
+        help=(
+            "For 'Slurrp Farm Pvt Ltd' with no website, derives 'slurrpfarm.com' "
+            "and uses it. Bounces more, but guarantees every row gets *something*. "
+            "Turn off if you only want emails that have a verified domain."
+        ),
+    )
+
     if st.button(f"Backfill emails for {len(target_rows)} rows", type="primary"):
         from core.enrich.finder import find_email
-        from core.enrich.guesser import guess_email
+        from core.enrich.guesser import derive_domain_from_name, guess_email
         from core.sheets import batch_update_column
         from core.config import CHANNEL_AUTOMATION
 
-        # Domain extractor — same logic as Apollo Import
         def _extract_domain_from_website(website: str) -> str:
             if not website:
                 return ""
@@ -365,8 +374,10 @@ else:
 
         dead_providers: set[str] = set()
         provider_deaths: dict[str, dict] = {}
+        outcomes: list[dict] = []  # per-row decisions for the post-run audit table
         n_via_provider = 0
         n_via_guess = 0
+        n_via_aggressive_guess = 0
         n_no_domain = 0
         n_no_email = 0
 
@@ -383,25 +394,38 @@ else:
             first = parts[0] if parts else ""
             last = parts[1] if len(parts) > 1 else ""
 
-            # Step 1: resolve domain
+            # Step 1: resolve domain via website → Brave → DNS
             domain = _extract_domain_from_website(str(row.get("Organisation Website", "")))
+            domain_source = "website" if domain else ""
             if not domain:
-                resolved, _ = _lookup_domain(company)
+                resolved, lookup_source = _lookup_domain(company)
                 domain = resolved or ""
+                if domain:
+                    domain_source = lookup_source  # 'Brave' or 'DNS guess'
+
+            # Step 2: aggressive fallback — derive a domain from the company name
+            if not domain and aggressive_guess and company:
+                derived = derive_domain_from_name(company)
+                if derived:
+                    domain = derived
+                    domain_source = "derived from name (unverified)"
 
             if not domain:
                 n_no_domain += 1
-                log.caption(f"({i}/{total}) {poc_name}: no domain — skipped")
+                outcomes.append({
+                    "sheet_row": sheet_row, "poc": poc_name, "company": company,
+                    "outcome": "skipped: no domain", "domain": "", "email": "",
+                })
+                log.caption(f"({i}/{total}) {poc_name} @ {company}: no domain — skipped")
                 progress.progress(i / total)
                 continue
 
-            # Step 2: try provider chain (skip dead ones)
+            # Step 3: provider chain (skip dead ones)
             found_email = None
             found_source = ""
-            signal_note = ""
             try:
                 result = find_email(
-                    domain, first or None, last or None, skip_providers=dead_providers
+                    domain, first or None, last or None, skip_providers=dead_providers,
                 )
                 fe = result.get("fatal_error") if isinstance(result, dict) else None
                 if fe:
@@ -412,37 +436,54 @@ else:
                 if result.get("email"):
                     found_email = result["email"]
                     found_source = result.get("source", "provider")
-                    signal_note = f" | Enriched via {found_source}"
                     n_via_provider += 1
             except Exception as e:
                 log.caption(f"({i}/{total}) {poc_name}: chain crashed ({e})")
 
-            # Step 3: fallback to pattern guess
+            # Step 4: pattern-guess fallback
             if not found_email and allow_guess and first:
                 g = guess_email(first, last, domain, prefer_founder_format=True)
                 if g.get("email"):
                     found_email = g["email"]
-                    found_source = "guess"
-                    alts = " / ".join(g.get("alternates", [])[:3])
-                    signal_note = (
-                        f" | Pattern-guessed: {found_email}"
-                        f"{(' | Try if bounces: ' + alts) if alts else ''}"
+                    found_source = (
+                        "guess (derived domain)" if domain_source.startswith("derived")
+                        else "guess"
                     )
-                    n_via_guess += 1
+                    if domain_source.startswith("derived"):
+                        n_via_aggressive_guess += 1
+                    else:
+                        n_via_guess += 1
 
             if found_email:
+                # Compose signal note carrying provenance — gives the analyst
+                # full transparency about how this email was found
+                signal_note = f" | Backfilled: {found_email} via {found_source} (domain: {domain_source})"
+                alts_note = ""
+                if found_source.startswith("guess"):
+                    g_alts = guess_email(first, last, domain, prefer_founder_format=True).get("alternates", [])
+                    if g_alts:
+                        alts_note = f" | Alternates if bounces: {' / '.join(g_alts[:3])}"
                 poc_email_updates[sheet_row] = found_email
                 channel_updates[sheet_row] = CHANNEL_AUTOMATION
                 existing_signal = str(row.get("Signal Details", "")).strip()
-                signal_detail_updates[sheet_row] = (existing_signal + signal_note).strip()
-                log.caption(f"({i}/{total}) {poc_name} → {found_email} ({found_source})")
+                signal_detail_updates[sheet_row] = (existing_signal + signal_note + alts_note).strip()
+                outcomes.append({
+                    "sheet_row": sheet_row, "poc": poc_name, "company": company,
+                    "outcome": found_source, "domain": domain, "email": found_email,
+                })
+                log.caption(f"({i}/{total}) {poc_name} @ {company} → {found_email} ({found_source})")
             else:
                 n_no_email += 1
-                log.caption(f"({i}/{total}) {poc_name}: no email found")
+                outcomes.append({
+                    "sheet_row": sheet_row, "poc": poc_name, "company": company,
+                    "outcome": "no email found", "domain": domain, "email": "",
+                })
+                log.caption(f"({i}/{total}) {poc_name} @ {company}: domain={domain}, no email found")
 
             progress.progress(i / total)
 
         # Batch writes — 3 separate column updates, one API call each
+        write_error = None
         if poc_email_updates:
             with st.spinner(f"Writing {len(poc_email_updates)} rows to Sheet..."):
                 try:
@@ -450,9 +491,10 @@ else:
                     batch_update_column(TAB_SIGNAL, "Outreach Channel", channel_updates)
                     batch_update_column(TAB_SIGNAL, "Signal Details", signal_detail_updates)
                 except Exception as e:
-                    st.error(f"Sheet write failed: {e}")
+                    write_error = str(e)
+                    st.error(f"Sheet write FAILED: {e}")
 
-        # Summary
+        # Provider death warnings
         if provider_deaths:
             for prov, info in provider_deaths.items():
                 kind = info.get("kind", "")
@@ -462,20 +504,37 @@ else:
                 elif "Quota" in kind:
                     st.warning(f"**{prov.title()} credits exhausted during backfill.** {msg}")
 
-        st.success(
-            f"Backfill complete.\n\n"
-            f"- **{n_via_provider}** found via providers\n"
-            f"- **{n_via_guess}** pattern-guessed\n"
-            f"- **{n_no_domain}** skipped (couldn't resolve domain)\n"
-            f"- **{n_no_email}** skipped (no email found, no guess possible)\n\n"
-            f"**{len(poc_email_updates)} rows** moved to Automation channel."
-        )
+        # Summary
+        n_written = len(poc_email_updates) if not write_error else 0
+        if n_written == 0:
+            st.error(
+                f"**0 rows written to the Sheet.** Here's why:\n\n"
+                f"- {n_no_domain} rows had no resolvable domain "
+                f"(turn on **Aggressive mode** above to force-guess one from the company name)\n"
+                f"- {n_no_email} rows had a domain but no email could be found or guessed "
+                f"(usually means the POC Name was empty)\n"
+                f"- Providers found: {n_via_provider} · Pattern-guessed: {n_via_guess} · "
+                f"Aggressive-guessed: {n_via_aggressive_guess}"
+            )
+        else:
+            st.success(
+                f"Backfill complete · **{n_written} rows** updated in the Sheet.\n\n"
+                f"- **{n_via_provider}** found via API providers\n"
+                f"- **{n_via_guess}** pattern-guessed with verified domain\n"
+                f"- **{n_via_aggressive_guess}** pattern-guessed with name-derived domain (higher bounce risk)\n"
+                f"- **{n_no_domain}** skipped (no domain possible)\n"
+                f"- **{n_no_email}** skipped (had domain but no name to guess from)"
+            )
 
-        if n_via_guess > 0:
-            st.info(
-                f"{n_via_guess} of your new emails are pattern-guesses. They're "
-                f"the most-likely format (typically `firstname@domain`) but "
-                f"not verified. Some will bounce. Signal Details lists 3 "
-                f"alternates per row if you want to try those when the primary "
-                f"bounces. Monitor your bounce rate; stop if it goes above 5%."
+        # Per-row audit table — always show so the user can see exactly what happened
+        if outcomes:
+            with st.expander(f"Per-row outcomes ({len(outcomes)})", expanded=(n_written == 0)):
+                st.dataframe(pd.DataFrame(outcomes), width="stretch", hide_index=True)
+
+        if n_via_aggressive_guess > 0:
+            st.warning(
+                f"{n_via_aggressive_guess} rows got an email built on a **name-derived domain** "
+                f"(no website or DNS check confirmed the domain). Bounce risk is high. "
+                f"Spot-check 5 random rows in the Sheet, send a small test batch, and watch "
+                f"the bounce rate before scaling up."
             )
